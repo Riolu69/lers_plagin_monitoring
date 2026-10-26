@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Lers.Framework" Version="3.50.*" />
+    <PackageReference Include="Lers.Framework" Version="3.67.4" />
   </ItemGroup>
 
 </Project>
