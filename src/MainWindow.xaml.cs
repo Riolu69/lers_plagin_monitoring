@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -279,21 +281,18 @@ namespace LersMonitor
             }
         }
 
-        // Извлекаем человекочитаемый текст ошибки из ответа ЛЭРС
         private static string ParseLersError(string jsonResponse, int statusCode)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(jsonResponse)) return $"Отказ сервера ({statusCode})";
+                if (string.IsNullOrWhiteSpace(jsonResponse)) return $"Отказ ({statusCode})";
                 using var doc = JsonDocument.Parse(jsonResponse);
                 if (doc.RootElement.TryGetProperty("errorDescription", out var desc)) return desc.GetString() ?? "";
                 if (doc.RootElement.TryGetProperty("errorMessage", out var msg)) return msg.GetString() ?? "";
                 if (doc.RootElement.TryGetProperty("message", out var m)) return m.GetString() ?? "";
             }
             catch { }
-            
-            if (jsonResponse.Length > 40) return jsonResponse.Substring(0, 40) + "...";
-            return jsonResponse;
+            return $"Отказ ({statusCode})";
         }
 
         private async void BtnStartMonitor_Click(object sender, RoutedEventArgs e)
@@ -368,10 +367,10 @@ namespace LersMonitor
                     }
                 }));
 
-                TxtStatus.Text = "Опрос запущен, ожидание ответа приборов...";
+                TxtStatus.Text = "Опрос запущен, ожидание ответа приборов (интерфейс свободен)...";
 
-                const int maxChecks = 20;
-                const int checkIntervalMs = 5000;
+                const int maxChecks = 25;
+                const int checkIntervalMs = 4000;
 
                 var pollingTasks = selectedPoints.Select(async p =>
                 {
@@ -385,11 +384,8 @@ namespace LersMonitor
 
                     for (int attempt = 1; attempt <= maxChecks; attempt++)
                     {
-                        // Если был отказ запуска (например "Опрос уже выполняется"), показываем его, но всё равно ждём данные!
-                        string prefix = startErr != null ? startErr : "Связь с прибором";
-                        vm.Status = $"{prefix} ({attempt}/{maxChecks})...";
-                        
-                        Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
+                        // Если 422 - это скорее всего опрос соседней точки этого же модема. Просто пишем "Опрос прибора".
+                        vm.Status = $"Опрос прибора ({attempt}/{maxChecks})...";
 
                         await Task.Delay(checkIntervalMs);
 
@@ -409,6 +405,7 @@ namespace LersMonitor
 
                                     if (isNew || attempt == maxChecks)
                                     {
+                                        // Обновляем ячейки. Благодаря INotifyPropertyChanged интерфейс обновится мгновенно и без зависаний
                                         vm.DeviceTime = timeNow;
                                         
                                         vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
@@ -444,8 +441,6 @@ namespace LersMonitor
                     {
                         vm.Status = startErr != null ? startErr : "Таймаут (нет связи)";
                     }
-
-                    Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
                 });
 
                 await Task.WhenAll(pollingTasks);
@@ -548,24 +543,58 @@ namespace LersMonitor
         public List<int> SelectedPointIds { get; set; } = new();
     }
 
-    public class PointResultViewModel
+    // РЕШЕНИЕ ЗАВИСАНИЙ: Класс теперь умеет уведомлять WPF об изменениях точечно
+    public class PointResultViewModel : INotifyPropertyChanged
     {
-        public int Id { get; set; }
-        public string NodeTitle { get; set; } = string.Empty;
-        public string Title { get; set; } = string.Empty;
-        public DateTime? DeviceTime { get; set; }
+        public event PropertyChangedEventHandler? PropertyChanged;
+        protected void OnPropertyChanged([CallerMemberName] string? name = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+
+        private int _id;
+        public int Id { get => _id; set { _id = value; OnPropertyChanged(); } }
+
+        private string _nodeTitle = string.Empty;
+        public string NodeTitle { get => _nodeTitle; set { _nodeTitle = value; OnPropertyChanged(); } }
+
+        private string _title = string.Empty;
+        public string Title { get => _title; set { _title = value; OnPropertyChanged(); } }
+
+        private DateTime? _deviceTime;
+        public DateTime? DeviceTime { get => _deviceTime; set { _deviceTime = value; OnPropertyChanged(); } }
         
-        public double? T1 { get; set; }
-        public double? T2 { get; set; }
-        public double? T3 { get; set; }
-        public double? P1 { get; set; }
-        public double? P2 { get; set; }
-        public double? V1 { get; set; }
-        public double? V2 { get; set; }
-        public double? M1 { get; set; }
-        public double? M2 { get; set; }
-        public double? Q { get; set; }
+        private double? _t1;
+        public double? T1 { get => _t1; set { _t1 = value; OnPropertyChanged(); } }
         
-        public string Status { get; set; } = string.Empty;
+        private double? _t2;
+        public double? T2 { get => _t2; set { _t2 = value; OnPropertyChanged(); } }
+        
+        private double? _t3;
+        public double? T3 { get => _t3; set { _t3 = value; OnPropertyChanged(); } }
+        
+        private double? _p1;
+        public double? P1 { get => _p1; set { _p1 = value; OnPropertyChanged(); } }
+        
+        private double? _p2;
+        public double? P2 { get => _p2; set { _p2 = value; OnPropertyChanged(); } }
+        
+        private double? _v1;
+        public double? V1 { get => _v1; set { _v1 = value; OnPropertyChanged(); } }
+        
+        private double? _v2;
+        public double? V2 { get => _v2; set { _v2 = value; OnPropertyChanged(); } }
+        
+        private double? _m1;
+        public double? M1 { get => _m1; set { _m1 = value; OnPropertyChanged(); } }
+        
+        private double? _m2;
+        public double? M2 { get => _m2; set { _m2 = value; OnPropertyChanged(); } }
+        
+        private double? _q;
+        public double? Q { get => _q; set { _q = value; OnPropertyChanged(); } }
+        
+        private string _status = string.Empty;
+        public string Status { get => _status; set { _status = value; OnPropertyChanged(); } }
     }
 }
