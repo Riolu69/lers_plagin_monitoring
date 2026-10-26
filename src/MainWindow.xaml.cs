@@ -1,8 +1,12 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using Lers;
@@ -17,11 +21,88 @@ namespace LersMonitor
     {
         private LersServer? _server;
         private readonly ObservableCollection<PointResultViewModel> _results = new();
+        private UserSettings _settings = new();
+
+        private static string SettingsFilePath =>
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LersMonitor", "settings.json");
 
         public MainWindow()
         {
             InitializeComponent();
             GridResults.ItemsSource = _results;
+            LoadUserSettings();
+        }
+
+        private void LoadUserSettings()
+        {
+            try
+            {
+                if (File.Exists(SettingsFilePath))
+                {
+                    var json = File.ReadAllText(SettingsFilePath);
+                    var loaded = JsonSerializer.Deserialize<UserSettings>(json);
+                    if (loaded != null)
+                    {
+                        _settings = loaded;
+                        TxtHost.Text = string.IsNullOrWhiteSpace(_settings.Host) ? "localhost" : _settings.Host;
+                        TxtPort.Text = _settings.Port == 0 ? "10000" : _settings.Port.ToString();
+                        TxtLogin.Text = _settings.Login;
+                        ChkRemember.IsChecked = _settings.RememberCredentials;
+
+                        if (!string.IsNullOrEmpty(_settings.PasswordBase64))
+                        {
+                            var bytes = Convert.FromBase64String(_settings.PasswordBase64);
+                            TxtPassword.Password = Encoding.UTF8.GetString(bytes);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ошибка чтения настроек — значения по умолчанию
+            }
+        }
+
+        private void SaveUserSettings(List<int>? selectedPointIds = null)
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(SettingsFilePath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+
+                bool remember = ChkRemember.IsChecked == true;
+                _settings.RememberCredentials = remember;
+
+                if (remember)
+                {
+                    _settings.Host = TxtHost.Text.Trim();
+                    ushort.TryParse(TxtPort.Text.Trim(), out ushort p);
+                    _settings.Port = p == 0 ? (ushort)10000 : p;
+                    _settings.Login = TxtLogin.Text.Trim();
+                    _settings.PasswordBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(TxtPassword.Password));
+                }
+                else
+                {
+                    _settings.Host = "localhost";
+                    _settings.Port = 10000;
+                    _settings.Login = "";
+                    _settings.PasswordBase64 = "";
+                }
+
+                if (selectedPointIds != null)
+                {
+                    _settings.SelectedPointIds = selectedPointIds;
+                }
+
+                var json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(SettingsFilePath, json);
+            }
+            catch
+            {
+            }
         }
 
         private async void BtnConnect_Click(object sender, RoutedEventArgs e)
@@ -31,39 +112,58 @@ namespace LersMonitor
                 TxtStatus.Text = "Подключение к серверу...";
                 BtnConnect.IsEnabled = false;
 
-                // 1. Считываем значения из UI-полей в главном потоке
                 string host = TxtHost.Text.Trim();
+                string portStr = TxtPort.Text.Trim();
                 string login = TxtLogin.Text.Trim();
                 string password = TxtPassword.Password;
 
-                // Порт в Lers.Framework имеет тип ushort
-                ushort port = 10000;
-                if (host.Contains(':'))
+                if (string.IsNullOrWhiteSpace(host))
                 {
-                    var parts = host.Split(':');
-                    host = parts[0];
-                    ushort.TryParse(parts[1], out port);
+                    MessageBox.Show("Укажите IP-адрес или домен сервера.", "Внимание", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
                 }
 
-                // 2. Подключаемся и запрашиваем точки в фоновом потоке
-                var pointsList = await Task.Run(() =>
+                if (!ushort.TryParse(portStr, out ushort port) || port == 0)
                 {
-                    _server = new LersServer();
-                    var auth = new BasicAuthenticationInfo(login, password);
-                    _server.Connect(host, port, auth);
+                    MessageBox.Show("Укажите корректный порт (число от 1 до 65535). По умолчанию: 10000", "Внимание", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
 
-                    return _server.MeasurePoints.GetList().ToList();
-                });
+                _server = new LersServer();
+                var auth = new BasicAuthenticationInfo(login, password);
 
-                // 3. Обновляем интерфейс в главном потоке
+                await _server.ConnectAsync(host, port, auth);
+
+                SaveUserSettings();
+
+                TxtStatus.Text = "Загрузка точек учёта...";
+
+                var points = await _server.MeasurePoints.GetListAsync();
+                var pointsList = points.ToList();
+
                 ListPoints.ItemsSource = pointsList;
+
+                if (_settings.SelectedPointIds != null && _settings.SelectedPointIds.Any())
+                {
+                    foreach (var p in pointsList.Where(p => _settings.SelectedPointIds.Contains(p.Id)))
+                    {
+                        ListPoints.SelectedItems.Add(p);
+                    }
+                }
+
                 BtnStartMonitor.IsEnabled = true;
-                TxtStatus.Text = $"Подключено. Загружено точек: {pointsList.Count}";
+                TxtStatus.Text = $"Подключено к {host}:{port}. Загружено точек: {pointsList.Count}";
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка подключения: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
-                TxtStatus.Text = "Ошибка подключения";
+                string details = ex.InnerException != null 
+                    ? $"{ex.Message}\n\nПодробности: {ex.InnerException.Message}" 
+                    : ex.Message;
+
+                MessageBox.Show($"Ошибка подключения:\n\n{details}", 
+                    "Ошибка подключения", MessageBoxButton.OK, MessageBoxImage.Error);
+                
+                TxtStatus.Text = $"Ошибка: {ex.Message}";
             }
             finally
             {
@@ -79,6 +179,8 @@ namespace LersMonitor
                 MessageBox.Show("Выберите хотя бы одну точку учёта в списке слева.");
                 return;
             }
+
+            SaveUserSettings(selectedPoints.Select(p => p.Id).ToList());
 
             _results.Clear();
             foreach (var point in selectedPoints)
@@ -127,7 +229,7 @@ namespace LersMonitor
             }
         }
 
-        private void TryStartPoll(LersServer server, System.Collections.Generic.List<MeasurePoint> points)
+        private void TryStartPoll(LersServer server, List<MeasurePoint> points)
         {
             try
             {
@@ -237,6 +339,16 @@ namespace LersMonitor
             }
             return default;
         }
+    }
+
+    public class UserSettings
+    {
+        public string Host { get; set; } = "localhost";
+        public ushort Port { get; set; } = 10000;
+        public string Login { get; set; } = "";
+        public string PasswordBase64 { get; set; } = "";
+        public bool RememberCredentials { get; set; } = true;
+        public List<int> SelectedPointIds { get; set; } = new();
     }
 
     public class PointResultViewModel
