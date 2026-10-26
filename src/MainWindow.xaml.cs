@@ -263,7 +263,6 @@ namespace LersMonitor
             }
         }
 
-        // Обработчик скрытия/показа колонок (ДОБАВЛЕН)
         private void ColumnToggle_Click(object sender, RoutedEventArgs e)
         {
             if (sender is CheckBox chk && GridResults != null)
@@ -306,61 +305,59 @@ namespace LersMonitor
             try
             {
                 BtnStartMonitor.IsEnabled = false;
-                TxtStatus.Text = "Снимок текущих данных до опроса...";
+                TxtStatus.Text = "Опрос приборов запущен...";
 
-                var initialTimes = new Dictionary<int, DateTime?>();
-                await Task.WhenAll(selectedPoints.Select(async p =>
-                {
-                    try
-                    {
-                        var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
-                        if (res.IsSuccessStatusCode)
-                        {
-                            var json = await res.Content.ReadAsStringAsync();
-                            if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
-                            {
-                                using var doc = JsonDocument.Parse(json);
-                                initialTimes[p.Id] = TryGetDate(doc.RootElement, "dateTime", "deviceTime", "date");
-                            }
-                        }
-                    }
-                    catch { }
-                }));
-
-                TxtStatus.Text = "Запуск ручного опроса приборов...";
-
-                await Task.WhenAll(selectedPoints.Select(async p =>
-                {
-                    try
-                    {
-                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{p.Id}/Currents?once=true");
-                        pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
-                        pollReq.Content.Headers.ContentLength = 0;
-                        await _http.SendAsync(pollReq);
-                    }
-                    catch { }
-                }));
-
-                TxtStatus.Text = "Опрос запущен, ожидание ответа приборов...";
-
-                const int maxChecks = 10;
-                const int checkIntervalMs = 5000;
-
-                var pollingTasks = selectedPoints.Select(async p =>
+                // Запускаем независимый цикл для каждой точки, чтобы одна медленная точка не тормозила остальные
+                var tasks = selectedPoints.Select(async p =>
                 {
                     var vm = _results.FirstOrDefault(r => r.Id == p.Id);
                     if (vm == null) return;
 
-                    initialTimes.TryGetValue(p.Id, out var timeBefore);
-                    bool receivedNewData = false;
-
-                    for (int attempt = 1; attempt <= maxChecks; attempt++)
+                    try
                     {
-                        vm.Status = "Опрос прибора...";
-                        await Task.Delay(checkIntervalMs);
-
-                        try
+                        // 1. Получаем время прибора до опроса
+                        DateTime? timeBefore = null;
+                        var resBefore = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
+                        if (resBefore.IsSuccessStatusCode)
                         {
+                            var jsonBefore = await resBefore.Content.ReadAsStringAsync();
+                            if (!string.IsNullOrWhiteSpace(jsonBefore) && jsonBefore.Trim() != "null")
+                            {
+                                using var doc = JsonDocument.Parse(jsonBefore);
+                                timeBefore = TryGetDate(doc.RootElement, "dateTime", "deviceTime", "date");
+                            }
+                        }
+
+                        // 2. Отправляем команду на запуск опроса
+                        vm.Status = "Запуск модема...";
+                        Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
+
+                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{p.Id}/Currents?once=true");
+                        pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
+                        pollReq.Content.Headers.ContentLength = 0;
+                        var pollRes = await _http.SendAsync(pollReq);
+
+                        // Если сервер ЛЭРС отклонил опрос (например, порт занят или модем не настроен)
+                        if (!pollRes.IsSuccessStatusCode)
+                        {
+                            vm.Status = $"Сбой запуска ({(int)pollRes.StatusCode})";
+                            Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
+                            return;
+                        }
+
+                        // 3. Цикл ожидания ответа прибора (увеличено до 100 секунд)
+                        const int maxChecks = 20; 
+                        const int checkIntervalMs = 5000;
+
+                        bool receivedNewData = false;
+
+                        for (int attempt = 1; attempt <= maxChecks; attempt++)
+                        {
+                            vm.Status = $"Связь с прибором ({attempt}/{maxChecks})...";
+                            Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
+                            
+                            await Task.Delay(checkIntervalMs);
+
                             var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
                             if (res.IsSuccessStatusCode)
                             {
@@ -373,6 +370,7 @@ namespace LersMonitor
 
                                     bool isNew = timeBefore == null || (timeNow != null && timeNow > timeBefore);
 
+                                    // Если появились новые данные ИЛИ вышло время (показываем что есть)
                                     if (isNew || attempt == maxChecks)
                                     {
                                         vm.DeviceTime = timeNow;
@@ -392,25 +390,31 @@ namespace LersMonitor
                                         
                                         vm.Q  = ExtractParameterValue(root, "q", "heat", "energy", "Q", "Q_in", "q_total");
 
-                                        vm.Status = isNew ? "Опрошено успешно" : "Таймаут (старые данные)";
+                                        // Если метка времени не сдвинулась, значит новых данных на приборе нет
+                                        vm.Status = isNew ? "Опрошено успешно" : "Данные не изменились";
                                         receivedNewData = true;
                                         break;
                                     }
                                 }
                             }
                         }
-                        catch { }
-                    }
 
-                    if (!receivedNewData)
+                        if (!receivedNewData)
+                        {
+                            vm.Status = "Таймаут (нет связи)";
+                        }
+                    }
+                    catch (Exception)
                     {
-                        vm.Status = "Нет ответа от прибора";
+                        vm.Status = "Ошибка сети";
                     }
-
-                    Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
+                    finally
+                    {
+                        Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
+                    }
                 });
 
-                await Task.WhenAll(pollingTasks);
+                await Task.WhenAll(tasks);
                 TxtStatus.Text = "Мониторинг завершен.";
             }
             catch (Exception ex)
