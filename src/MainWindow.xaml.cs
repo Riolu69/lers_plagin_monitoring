@@ -279,6 +279,23 @@ namespace LersMonitor
             }
         }
 
+        // Извлекаем человекочитаемый текст ошибки из ответа ЛЭРС
+        private static string ParseLersError(string jsonResponse, int statusCode)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(jsonResponse)) return $"Отказ сервера ({statusCode})";
+                using var doc = JsonDocument.Parse(jsonResponse);
+                if (doc.RootElement.TryGetProperty("errorDescription", out var desc)) return desc.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("errorMessage", out var msg)) return msg.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("message", out var m)) return m.GetString() ?? "";
+            }
+            catch { }
+            
+            if (jsonResponse.Length > 40) return jsonResponse.Substring(0, 40) + "...";
+            return jsonResponse;
+        }
+
         private async void BtnStartMonitor_Click(object sender, RoutedEventArgs e)
         {
             var selectedPoints = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
@@ -308,6 +325,8 @@ namespace LersMonitor
                 TxtStatus.Text = "Снимок текущих данных до опроса...";
 
                 var initialTimes = new Dictionary<int, DateTime?>();
+                var startErrors = new Dictionary<int, string>();
+
                 await Task.WhenAll(selectedPoints.Select(async p =>
                 {
                     try
@@ -337,13 +356,16 @@ namespace LersMonitor
                         pollReq.Content.Headers.ContentLength = 0;
                         var pollRes = await _http.SendAsync(pollReq);
                         
-                        var vm = _results.FirstOrDefault(r => r.Id == p.Id);
-                        if (vm != null && !pollRes.IsSuccessStatusCode)
+                        if (!pollRes.IsSuccessStatusCode)
                         {
-                            vm.Status = $"Сбой запуска ({(int)pollRes.StatusCode})";
+                            string errText = await pollRes.Content.ReadAsStringAsync();
+                            startErrors[p.Id] = ParseLersError(errText, (int)pollRes.StatusCode);
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        startErrors[p.Id] = "Ошибка сети: " + ex.Message;
+                    }
                 }));
 
                 TxtStatus.Text = "Опрос запущен, ожидание ответа приборов...";
@@ -354,14 +376,19 @@ namespace LersMonitor
                 var pollingTasks = selectedPoints.Select(async p =>
                 {
                     var vm = _results.FirstOrDefault(r => r.Id == p.Id);
-                    if (vm == null || vm.Status.StartsWith("Сбой запуска")) return;
+                    if (vm == null) return;
 
                     initialTimes.TryGetValue(p.Id, out var timeBefore);
+                    startErrors.TryGetValue(p.Id, out var startErr);
+                    
                     bool receivedNewData = false;
 
                     for (int attempt = 1; attempt <= maxChecks; attempt++)
                     {
-                        vm.Status = $"Связь с прибором ({attempt}/{maxChecks})...";
+                        // Если был отказ запуска (например "Опрос уже выполняется"), показываем его, но всё равно ждём данные!
+                        string prefix = startErr != null ? startErr : "Связь с прибором";
+                        vm.Status = $"{prefix} ({attempt}/{maxChecks})...";
+                        
                         Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
 
                         await Task.Delay(checkIntervalMs);
@@ -384,7 +411,6 @@ namespace LersMonitor
                                     {
                                         vm.DeviceTime = timeNow;
                                         
-                                        // Извлекаем все доступные параметры
                                         vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
                                         vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
                                         vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
@@ -400,7 +426,11 @@ namespace LersMonitor
                                         
                                         vm.Q  = ExtractParameterValue(root, "q", "heat", "energy", "Q", "Q_in", "q_total");
 
-                                        vm.Status = isNew ? "Опрошено успешно" : "Данные не изменились";
+                                        if (isNew)
+                                            vm.Status = "Опрошено успешно";
+                                        else
+                                            vm.Status = startErr != null ? startErr : "Данные не изменились";
+                                            
                                         receivedNewData = true;
                                         break;
                                     }
@@ -412,7 +442,7 @@ namespace LersMonitor
 
                     if (!receivedNewData)
                     {
-                        vm.Status = "Таймаут (нет связи)";
+                        vm.Status = startErr != null ? startErr : "Таймаут (нет связи)";
                     }
 
                     Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
@@ -434,7 +464,6 @@ namespace LersMonitor
 
         private static double? ExtractParameterValue(JsonElement root, params string[] targetNames)
         {
-            // 1. Проверяем прямые свойства
             foreach (var name in targetNames)
             {
                 if (root.TryGetProperty(name, out var prop))
@@ -444,7 +473,6 @@ namespace LersMonitor
                 }
             }
 
-            // 2. Ищем внутри вложенных массивов (например, "values")
             if (root.ValueKind == JsonValueKind.Object)
             {
                 foreach (var prop in root.EnumerateObject())
@@ -456,8 +484,6 @@ namespace LersMonitor
                             if (item.ValueKind == JsonValueKind.Object)
                             {
                                 string typeName = "";
-                                
-                                // ВОССТАНОВЛЕНО: проверяем все возможные ключи, включая dataParameter (как в ЛЭРС)
                                 if (item.TryGetProperty("dataParameter", out var dpProp)) typeName = dpProp.ToString();
                                 if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("parameter", out var pProp)) typeName = pProp.ToString();
                                 if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("name", out var nProp)) typeName = nProp.ToString();
@@ -467,14 +493,17 @@ namespace LersMonitor
 
                                 bool matchesName = targetNames.Any(tn => typeName.IndexOf(tn, StringComparison.OrdinalIgnoreCase) >= 0);
 
-                                if (matchesName)
+                                if (matchesName || prop.Name.Equals("values", StringComparison.OrdinalIgnoreCase))
                                 {
                                     if (item.TryGetProperty("value", out var valProp) || 
                                         item.TryGetProperty("val", out valProp) || 
                                         item.TryGetProperty("currentValue", out valProp))
                                     {
-                                        if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out double v)) return v;
-                                        if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString(), out double sv)) return sv;
+                                        if (matchesName || targetNames.Length == 0)
+                                        {
+                                            if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out double v)) return v;
+                                            if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString(), out double sv)) return sv;
+                                        }
                                     }
                                 }
                             }
