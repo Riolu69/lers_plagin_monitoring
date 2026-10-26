@@ -56,6 +56,7 @@ namespace LersMonitor
                         TxtPort.Text = _settings.Port == 0 ? "10000" : _settings.Port.ToString();
                         TxtLogin.Text = _settings.Login;
                         ChkRemember.IsChecked = _settings.RememberCredentials;
+                        ChkDarkMode.IsChecked = _settings.IsDarkMode;
 
                         if (!string.IsNullOrEmpty(_settings.PasswordBase64))
                         {
@@ -65,10 +66,25 @@ namespace LersMonitor
                         
                         if (_settings.PointLimits == null) 
                             _settings.PointLimits = new Dictionary<int, PointThresholds>();
+
+                        // Восстановление последних данных таблицы после перезапуска
+                        if (_settings.LastResults != null && _settings.LastResults.Any())
+                        {
+                            foreach (var r in _settings.LastResults)
+                            {
+                                if (_settings.PointLimits.TryGetValue(r.Id, out var limits))
+                                    r.Limits = limits;
+                                
+                                _results.Add(r);
+                                r.RefreshColors();
+                            }
+                        }
                     }
                 }
             }
             catch { }
+            
+            ApplyTheme(_settings.IsDarkMode);
         }
 
         private void SaveUserSettings(List<int>? selectedPointIds = null)
@@ -81,6 +97,7 @@ namespace LersMonitor
 
                 bool remember = ChkRemember.IsChecked == true;
                 _settings.RememberCredentials = remember;
+                _settings.IsDarkMode = ChkDarkMode.IsChecked == true;
 
                 if (remember)
                 {
@@ -101,12 +118,63 @@ namespace LersMonitor
                 if (selectedPointIds != null)
                     _settings.SelectedPointIds = selectedPointIds;
 
+                // Сохраняем текущее состояние таблицы, чтобы не пропадало при закрытии
+                _settings.LastResults = _results.ToList();
+
                 var json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(SettingsFilePath, json);
             }
             catch { }
         }
+        
+        protected override void OnClosed(EventArgs e)
+        {
+            SaveUserSettings();
+            base.OnClosed(e);
+        }
 
+        // --- ЛОГИКА ТЁМНОЙ ТЕМЫ ---
+        private void ChkDarkMode_Click(object sender, RoutedEventArgs e)
+        {
+            bool isDark = ChkDarkMode.IsChecked == true;
+            ApplyTheme(isDark);
+            _settings.IsDarkMode = isDark;
+            SaveUserSettings();
+            
+            // Принудительно обновляем цвета таблицы
+            foreach (var r in _results) r.RefreshColors();
+        }
+
+        private void ApplyTheme(bool isDark)
+        {
+            var res = this.Resources;
+            if (isDark)
+            {
+                res["SystemBackground"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1C1C1E"));
+                res["CardBackground"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2C2C2E"));
+                res["BorderBrushColor"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#38383A"));
+                res["LabelPrimary"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FFFFFF"));
+                res["LabelSecondary"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#98989F"));
+                res["InputBackground"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1C1C1E"));
+                res["HeaderBackground"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#2C2C2E"));
+                res["SelectionBackground"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#3A3A3C"));
+                res["SelectionForeground"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FFFFFF"));
+            }
+            else
+            {
+                res["SystemBackground"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F5F5F7"));
+                res["CardBackground"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FFFFFF"));
+                res["BorderBrushColor"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E5E5EA"));
+                res["LabelPrimary"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1D1D1F"));
+                res["LabelSecondary"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#86868B"));
+                res["InputBackground"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FBFBFD"));
+                res["HeaderBackground"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FAFAFC"));
+                res["SelectionBackground"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#E8F2FE"));
+                res["SelectionForeground"] = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1D1D1F"));
+            }
+        }
+
+        // --- ЛОГИКА ПОДКЛЮЧЕНИЯ И ФИЛЬТРАЦИИ ---
         private async void BtnConnect_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -228,7 +296,17 @@ namespace LersMonitor
                 }
 
                 _allPoints = _allPoints.OrderBy(p => p.NodeTitle).ThenBy(p => p.Title).ToList();
-                ApplyPointsFilter();
+                
+                // Заполняем выпадающие списки для умной фильтрации
+                var uniqueNodes = _allPoints.Select(p => p.NodeTitle).Distinct().OrderBy(n => n).ToList();
+                uniqueNodes.Insert(0, "Все объекты");
+                CmbNode.ItemsSource = uniqueNodes;
+                CmbNode.SelectedIndex = 0;
+                
+                CmbSystemType.ItemsSource = new List<string> { "Все системы", "Теплоснабжение", "ГВС", "Подпитка", "ХВС" };
+                CmbSystemType.SelectedIndex = 0;
+
+                ApplyFilters();
 
                 if (_settings.SelectedPointIds != null && _settings.SelectedPointIds.Any())
                 {
@@ -252,24 +330,39 @@ namespace LersMonitor
             }
         }
 
-        private void TxtSearch_TextChanged(object sender, TextChangedEventArgs e)
+        private void ApplyFilters_Changed(object sender, SelectionChangedEventArgs e) => ApplyFilters();
+        private void ApplyFilters_Changed(object sender, TextChangedEventArgs e) => ApplyFilters();
+
+        private void ApplyFilters()
         {
-            ApplyPointsFilter();
+            if (_allPoints == null || !_allPoints.Any()) return;
+
+            string query = TxtSearch.Text.Trim().ToLower();
+            string selectedNode = CmbNode.SelectedItem as string;
+            string selectedType = CmbSystemType.SelectedItem as string;
+
+            var filtered = _allPoints.AsEnumerable();
+
+            if (!string.IsNullOrEmpty(query))
+                filtered = filtered.Where(p => p.DisplayName.ToLower().Contains(query));
+
+            if (!string.IsNullOrEmpty(selectedNode) && selectedNode != "Все объекты")
+                filtered = filtered.Where(p => p.NodeTitle == selectedNode);
+
+            if (!string.IsNullOrEmpty(selectedType) && selectedType != "Все системы")
+                filtered = filtered.Where(p => p.Title.ToLower().Contains(selectedType.ToLower()));
+
+            ListPoints.ItemsSource = filtered.ToList();
         }
 
-        private void ApplyPointsFilter()
+        private void BtnSelectAll_Click(object sender, RoutedEventArgs e)
         {
-            string query = TxtSearch.Text.Trim().ToLower();
-            if (string.IsNullOrEmpty(query))
-            {
-                ListPoints.ItemsSource = _allPoints;
-            }
-            else
-            {
-                ListPoints.ItemsSource = _allPoints
-                    .Where(p => p.DisplayName.ToLower().Contains(query))
-                    .ToList();
-            }
+            ListPoints.SelectAll();
+        }
+
+        private void BtnClearSelection_Click(object sender, RoutedEventArgs e)
+        {
+            ListPoints.UnselectAll();
         }
 
         private void ColumnToggle_Click(object sender, RoutedEventArgs e)
@@ -289,7 +382,6 @@ namespace LersMonitor
         }
 
         // --- ЛОГИКА НАСТРОЕК ДОПУСКОВ ---
-
         private void BtnSettings_Click(object sender, RoutedEventArgs e)
         {
             var selected = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
@@ -357,7 +449,6 @@ namespace LersMonitor
             _settings.PointLimits[_editingPoint.Id] = limits;
             SaveUserSettings();
 
-            // Если точка сейчас находится в таблице мониторинга — моментально обновляем цвета
             var vm = _results.FirstOrDefault(r => r.Id == _editingPoint.Id);
             if (vm != null)
             {
@@ -378,7 +469,6 @@ namespace LersMonitor
         }
 
         // --- ЛОГИКА ОПРОСА ---
-
         private static string ParseLersError(string jsonResponse, int statusCode)
         {
             try
@@ -543,6 +633,7 @@ namespace LersMonitor
 
                 await Task.WhenAll(pollingTasks);
                 TxtStatus.Text = "Мониторинг завершен.";
+                SaveUserSettings(); // Сохраняем результаты сразу после окончания опроса
             }
             catch (Exception ex)
             {
@@ -654,8 +745,10 @@ namespace LersMonitor
         public string Login { get; set; } = "";
         public string PasswordBase64 { get; set; } = "";
         public bool RememberCredentials { get; set; } = true;
+        public bool IsDarkMode { get; set; } = false;
         public List<int> SelectedPointIds { get; set; } = new();
         public Dictionary<int, PointThresholds> PointLimits { get; set; } = new();
+        public List<PointResultViewModel> LastResults { get; set; } = new();
     }
 
     public class PointResultViewModel : INotifyPropertyChanged
@@ -666,6 +759,7 @@ namespace LersMonitor
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         }
 
+        [System.Text.Json.Serialization.JsonIgnore]
         public PointThresholds? Limits { get; set; }
 
         public void RefreshColors()
@@ -680,10 +774,11 @@ namespace LersMonitor
 
         private Brush GetColor(double? val, double? min, double? max)
         {
-            if (val == null) return new SolidColorBrush(Color.FromRgb(29, 29, 31)); // LabelPrimary
+            var defaultColor = Application.Current.MainWindow.TryFindResource("LabelPrimary") as Brush ?? Brushes.Black;
+            if (val == null) return defaultColor;
             if (min.HasValue && val.Value < min.Value) return Brushes.Red;
             if (max.HasValue && val.Value > max.Value) return Brushes.Red;
-            return new SolidColorBrush(Color.FromRgb(29, 29, 31));
+            return defaultColor;
         }
 
         private int _id;
@@ -700,10 +795,12 @@ namespace LersMonitor
         
         private double? _t1;
         public double? T1 { get => _t1; set { _t1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T1Color)); } }
+        [System.Text.Json.Serialization.JsonIgnore]
         public Brush T1Color => GetColor(T1, Limits?.T1Min, Limits?.T1Max);
         
         private double? _t2;
         public double? T2 { get => _t2; set { _t2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T2Color)); } }
+        [System.Text.Json.Serialization.JsonIgnore]
         public Brush T2Color => GetColor(T2, Limits?.T2Min, Limits?.T2Max);
         
         private double? _t3;
@@ -711,18 +808,22 @@ namespace LersMonitor
         
         private double? _p1;
         public double? P1 { get => _p1; set { _p1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(P1Color)); } }
+        [System.Text.Json.Serialization.JsonIgnore]
         public Brush P1Color => GetColor(P1, Limits?.P1Min, Limits?.P1Max);
         
         private double? _p2;
         public double? P2 { get => _p2; set { _p2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(P2Color)); } }
+        [System.Text.Json.Serialization.JsonIgnore]
         public Brush P2Color => GetColor(P2, Limits?.P2Min, Limits?.P2Max);
         
         private double? _v1;
         public double? V1 { get => _v1; set { _v1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(V1Color)); } }
+        [System.Text.Json.Serialization.JsonIgnore]
         public Brush V1Color => GetColor(V1, Limits?.V1Min, Limits?.V1Max);
         
         private double? _v2;
         public double? V2 { get => _v2; set { _v2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(V2Color)); } }
+        [System.Text.Json.Serialization.JsonIgnore]
         public Brush V2Color => GetColor(V2, Limits?.V2Min, Limits?.V2Max);
         
         private double? _m1;
