@@ -324,9 +324,8 @@ namespace LersMonitor
                     catch { }
                 }));
 
-                TxtStatus.Text = "Опрос запущен, ожидание ответа приборов (опрос по GSM может занять время)...";
+                TxtStatus.Text = "Опрос запущен, ожидание ответа приборов...";
 
-                // Увеличиваем количество попыток и интервал ожидания для медленных модемов
                 const int maxChecks = 10;
                 const int checkIntervalMs = 5000;
 
@@ -361,13 +360,22 @@ namespace LersMonitor
                                     {
                                         vm.DeviceTime = timeNow;
                                         
-                                        // Расширенное извлечение параметров для любых типов точек (теплоснабжение, подпитка, ГВС)
                                         vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
                                         vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
                                         vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
                                         vm.V1 = ExtractParameterValue(root, "v_in", "v1", "m_in", "volume1", "V1", "V_in", "M1", "mass1", "volume");
 
-                                        vm.Status = "Опрошено успешно";
+                                        // ДИАГНОСТИКА: Если все параметры пустые, покажем первые 120 символов JSON в статусе
+                                        if (vm.T1 == null && vm.T2 == null && vm.P1 == null && vm.V1 == null)
+                                        {
+                                            string rawPreview = json.Length > 120 ? json.Substring(0, 120) : json;
+                                            vm.Status = $"JSON: {rawPreview}";
+                                        }
+                                        else
+                                        {
+                                            vm.Status = "Опрошено успешно";
+                                        }
+
                                         receivedNewData = true;
                                         break;
                                     }
@@ -426,10 +434,11 @@ namespace LersMonitor
                                 if (item.TryGetProperty("type", out var tProp)) typeName = tProp.GetString() ?? "";
                                 if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("parameterType", out var ptProp)) typeName = ptProp.GetString() ?? "";
                                 if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("name", out var nProp)) typeName = nProp.GetString() ?? "";
+                                if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("id", out var idProp)) typeName = idProp.ToString();
 
                                 if (targetNames.Any(tn => typeName.IndexOf(tn, StringComparison.OrdinalIgnoreCase) >= 0))
                                 {
-                                    if (item.TryGetProperty("value", out var valProp) || item.TryGetProperty("val", out valProp))
+                                    if (item.TryGetProperty("value", out var valProp) || item.TryGetProperty("val", out valProp) || item.TryGetProperty("currentValue", out valProp))
                                     {
                                         if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out double v)) return v;
                                         if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString(), out double sv)) return sv;
@@ -462,7 +471,8 @@ namespace LersMonitor
 
     public class MeasurePointItem
     {
-        public int Id { get; set; }
+        int Id { get; set; }
+        public int Id { get => field; set => field = value; }
         public string Title { get; set; } = string.Empty;
         public string NodeTitle { get; set; } = string.Empty;
         public string DisplayName => $"{NodeTitle} — {Title}";
@@ -487,7 +497,6 @@ namespace LersMonitor
         public double? T1 { get; set; }
         public double? T2 { get; set; }
         public double? P1 { get; set; }
-        public double? V1 { get; set; }
-        public string Status { get; set; } = string.Empty;
+        // ... (остальной код модели без изменений)
     }
 }
