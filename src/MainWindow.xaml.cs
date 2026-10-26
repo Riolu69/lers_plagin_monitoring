@@ -5,6 +5,8 @@ using System.Threading.Tasks;
 using System.Windows;
 using Lers;
 using Lers.Core;
+using Lers.Data;
+using Lers.Networking;
 using Lers.Poll;
 
 namespace LersMonitor
@@ -28,6 +30,7 @@ namespace LersMonitor
             {
                 TxtStatus.Text = "Подключение к серверу...";
                 _server = new LersServer();
+                
                 var auth = new BasicAuthenticationInfo(TxtLogin.Text, TxtPassword.Password);
                 await _server.ConnectAsync(TxtHost.Text, 10000, auth);
 
@@ -67,14 +70,30 @@ namespace LersMonitor
             try
             {
                 TxtStatus.Text = "Запуск ручного опроса...";
-                var job = await _server!.Poll.StartManualPollAsync(selectedPoints, new PollSettings { Action = PollAction.Current });
 
+                // Параметры для опроса только текущих значений
+                var pollParams = new ManualPollParameters
+                {
+                    DataTypes = PollDataType.Current
+                };
+
+                // Добавляем выбранные точки учета в сеанс
+                foreach (var point in selectedPoints)
+                {
+                    pollParams.AddMeasurePoint(point);
+                }
+
+                var session = await _server!.Poll.StartManualPollAsync(pollParams);
+
+                // Ожидание завершения опроса
                 while (true)
                 {
-                    await job.RefreshAsync();
-                    TxtStatus.Text = $"Опрос: {job.State}, Выполнено: {job.Progress}%";
+                    await session.RefreshAsync();
+                    TxtStatus.Text = $"Опрос: {session.State}";
 
-                    if (job.State == PollJobState.Finished || job.State == PollJobState.Terminated || job.State == PollJobState.Error)
+                    if (session.State == PollSessionState.Completed || 
+                        session.State == PollSessionState.Terminated || 
+                        session.State == PollSessionState.Error)
                     {
                         break;
                     }
@@ -83,9 +102,15 @@ namespace LersMonitor
                 }
 
                 TxtStatus.Text = "Считывание текущих значений...";
+                
+                // Считываем обновленные текущие данные
                 foreach (var item in _results)
                 {
-                    var current = await _server.Data.MeasurePoints.GetCurrentDataAsync(item.Id);
+                    var point = selectedPoints.FirstOrDefault(p => p.Id == item.Id);
+                    if (point == null) continue;
+
+                    // Запрашиваем последние сохраненные текущие данные
+                    var current = await point.Data.GetCurrentAsync();
                     if (current != null)
                     {
                         item.DeviceTime = current.DeviceTime;
