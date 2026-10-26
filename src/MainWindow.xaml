@@ -49,12 +49,90 @@
             </Style.Triggers>
         </Style>
 
+        <!-- Стилизованный ComboBox с поддержкой тёмной темы -->
         <Style TargetType="ComboBox">
             <Setter Property="Background" Value="{DynamicResource InputBackground}"/>
             <Setter Property="Foreground" Value="{DynamicResource LabelPrimary}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushColor}"/>
+            <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="FontSize" Value="13"/>
-            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="Padding" Value="6,4"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <Border x:Name="templateRoot" 
+                                    Background="{TemplateBinding Background}" 
+                                    BorderBrush="{TemplateBinding BorderBrush}" 
+                                    BorderThickness="{TemplateBinding BorderThickness}" 
+                                    CornerRadius="8"/>
+                            <ToggleButton x:Name="toggleButton" 
+                                          Background="Transparent" 
+                                          BorderBrush="{Binding BorderBrush, RelativeSource={RelativeSource TemplatedParent}}" 
+                                          BorderThickness="{Binding BorderThickness, RelativeSource={RelativeSource TemplatedParent}}" 
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}" 
+                                          ClickMode="Press">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="Transparent" CornerRadius="8">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="20"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Path x:Name="arrow" Grid.Column="1" Data="M0,0 L4,4 L8,0 Z" 
+                                                      Fill="{DynamicResource LabelSecondary}" 
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="contentPresenter" 
+                                              Content="{TemplateBinding SelectionBoxItem}" 
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" 
+                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" 
+                                              Margin="10,0,25,0" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                            <Popup x:Name="PART_Popup" AllowsTransparency="True" Focusable="False" IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="Fade" Placement="Bottom">
+                                <Border x:Name="shadowBorder" Background="{DynamicResource CardBackground}" BorderBrush="{DynamicResource BorderBrushColor}" BorderThickness="1" CornerRadius="8" MaxHeight="{TemplateBinding MaxDropDownHeight}" MinWidth="{TemplateBinding ActualWidth}" Margin="0,4,0,0">
+                                    <Border.Effect>
+                                        <DropShadowEffect BlurRadius="15" ShadowDepth="3" Opacity="0.15"/>
+                                    </Border.Effect>
+                                    <ScrollViewer x:Name="DropDownScrollViewer" Margin="0" SnapsToDevicePixels="True">
+                                        <ItemsPresenter x:Name="ItemsPresenter" KeyboardNavigation.ControlTabIndex="1" SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Элементы выпадающего списка ComboBoxItem -->
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource LabelPrimary}"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="6" Margin="4,2" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter TextElement.Foreground="{DynamicResource LabelPrimary}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource HeaderBackground}"/>
+                            </Trigger>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource SelectionBackground}"/>
+                                <Setter TargetName="bd" Property="TextElement.Foreground" Value="{DynamicResource SelectionForeground}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style TargetType="PasswordBox">
