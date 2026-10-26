@@ -262,8 +262,8 @@ namespace LersMonitor
                     .ToList();
             }
         }
-        
-        // Метод фильтрации отображения колонок через чекбоксы
+
+        // Обработчик скрытия/показа колонок (ДОБАВЛЕН)
         private void ColumnToggle_Click(object sender, RoutedEventArgs e)
         {
             if (sender is CheckBox chk && GridResults != null)
@@ -271,7 +271,7 @@ namespace LersMonitor
                 string headerPrefix = chk.Content?.ToString() + " ";
                 foreach (var col in GridResults.Columns)
                 {
-                    if (col.Header != null && col.Header.ToString().StartsWith(headerPrefix))
+                    if (col.Header != null && col.Header.ToString()!.StartsWith(headerPrefix))
                     {
                         col.Visibility = chk.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
                         break;
@@ -377,7 +377,6 @@ namespace LersMonitor
                                     {
                                         vm.DeviceTime = timeNow;
                                         
-                                        // Расширенный сбор всех доступных параметров
                                         vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
                                         vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
                                         vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
