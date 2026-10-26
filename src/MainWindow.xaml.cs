@@ -324,10 +324,11 @@ namespace LersMonitor
                     catch { }
                 }));
 
-                TxtStatus.Text = "Опрос запущен, ожидание новых данных...";
+                TxtStatus.Text = "Опрос запущен, ожидание ответа приборов (опрос по GSM может занять время)...";
 
-                const int maxChecks = 8;
-                const int checkIntervalMs = 3000;
+                // Увеличиваем количество попыток и интервал ожидания для медленных модемов
+                const int maxChecks = 10;
+                const int checkIntervalMs = 5000;
 
                 var pollingTasks = selectedPoints.Select(async p =>
                 {
@@ -339,7 +340,7 @@ namespace LersMonitor
 
                     for (int attempt = 1; attempt <= maxChecks; attempt++)
                     {
-                        vm.Status = $"Опрос ({attempt}/{maxChecks})...";
+                        vm.Status = "Опрос прибора...";
                         await Task.Delay(checkIntervalMs);
 
                         try
@@ -360,13 +361,13 @@ namespace LersMonitor
                                     {
                                         vm.DeviceTime = timeNow;
                                         
-                                        // Универсальное извлечение параметров из корневых свойств или вложенных словарей ЛЭРС
-                                        vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in");
-                                        vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out");
-                                        vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in");
-                                        vm.V1 = ExtractParameterValue(root, "v_in", "v1", "m_in", "volume1", "V1", "V_in", "M1");
+                                        // Расширенное извлечение параметров для любых типов точек (теплоснабжение, подпитка, ГВС)
+                                        vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
+                                        vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
+                                        vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
+                                        vm.V1 = ExtractParameterValue(root, "v_in", "v1", "m_in", "volume1", "V1", "V_in", "M1", "mass1", "volume");
 
-                                        vm.Status = isNew ? "Опрошено успешно" : "Таймаут (старые данные)";
+                                        vm.Status = "Опрошено успешно";
                                         receivedNewData = true;
                                         break;
                                     }
@@ -378,7 +379,7 @@ namespace LersMonitor
 
                     if (!receivedNewData)
                     {
-                        vm.Status = "Нет ответа";
+                        vm.Status = "Нет ответа от прибора";
                     }
 
                     Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
@@ -400,7 +401,6 @@ namespace LersMonitor
 
         private static double? ExtractParameterValue(JsonElement root, params string[] targetNames)
         {
-            // 1. Проверяем прямые свойства в корне JSON объекта
             foreach (var name in targetNames)
             {
                 if (root.TryGetProperty(name, out var prop))
@@ -412,7 +412,6 @@ namespace LersMonitor
                 }
             }
 
-            // 2. Если ЛЭРС возвращает коллекцию параметров (например, массив объектов с ключами "parameterType" / "value")
             if (root.ValueKind == JsonValueKind.Object)
             {
                 foreach (var prop in root.EnumerateObject())
