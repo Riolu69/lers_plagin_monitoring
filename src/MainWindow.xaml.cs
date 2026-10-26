@@ -31,22 +31,21 @@ namespace LersMonitor
                 TxtStatus.Text = "Подключение к серверу...";
                 BtnConnect.IsEnabled = false;
 
-                // 1. Считываем значения из UI-полей в главном потоке!
+                // 1. Считываем значения из UI-полей в главном потоке
                 string host = TxtHost.Text.Trim();
                 string login = TxtLogin.Text.Trim();
                 string password = TxtPassword.Password;
 
-                // Разбираем порт, если ввели в формате host:port
-                int port = 10000;
+                // Порт в Lers.Framework имеет тип ushort
+                ushort port = 10000;
                 if (host.Contains(':'))
                 {
                     var parts = host.Split(':');
                     host = parts[0];
-                    int.TryParse(parts[1], out port);
+                    ushort.TryParse(parts[1], out port);
                 }
 
-                // 2. Создаем и подключаем сервер целиком в фоновом потоке,
-                // не трогая элементы интерфейса внутри Task.Run
+                // 2. Подключаемся и запрашиваем точки в фоновом потоке
                 var pointsList = await Task.Run(() =>
                 {
                     _server = new LersServer();
@@ -56,7 +55,7 @@ namespace LersMonitor
                     return _server.MeasurePoints.GetList().ToList();
                 });
 
-                // 3. Возвращаемся в UI-поток и обновляем список на экране
+                // 3. Обновляем интерфейс в главном потоке
                 ListPoints.ItemsSource = pointsList;
                 BtnStartMonitor.IsEnabled = true;
                 TxtStatus.Text = $"Подключено. Загружено точек: {pointsList.Count}";
@@ -97,17 +96,14 @@ namespace LersMonitor
                 BtnStartMonitor.IsEnabled = false;
                 TxtStatus.Text = "Запуск опроса и чтение данных...";
 
-                // Копируем список моделей, чтобы безопасно менять их свойства в фоновом потоке
                 var itemsToProcess = _results.ToList();
 
                 await Task.Run(async () =>
                 {
-                    // 1. Попытка запуска ручного опроса
                     TryStartPoll(_server!, selectedPoints);
 
                     await Task.Delay(5000);
 
-                    // 2. Считывание текущих параметров по точкам
                     foreach (var item in itemsToProcess)
                     {
                         var point = selectedPoints.FirstOrDefault(p => p.Id == item.Id);
