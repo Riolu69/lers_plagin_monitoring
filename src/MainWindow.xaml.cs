@@ -70,24 +70,22 @@ namespace LersMonitor
 
             try
             {
-                TxtStatus.Text = "Запуск ручного опроса...";
+                TxtStatus.Text = "Запуск опроса точек...";
 
-                // Постановка точек в очередь опроса через PollManager
+                // Запуск опроса для каждой выбранной точки учета
                 await Task.Run(() =>
                 {
                     foreach (var point in selectedPoints)
                     {
-                        // Ставим опрос текущих данных по прибору точки
-                        _server!.Poll.Queue(point, PollAction.Current);
+                        // В Lers.Framework опрос вызывается непосредственно у точки
+                        point.Poll(PollActionType.Current);
                     }
                 });
 
-                TxtStatus.Text = "Опрос поставлен в очередь. Ожидание завершения (10 сек)...";
+                TxtStatus.Text = "Опрос запущен. Ожидание ответа приборов (8 сек)...";
+                await Task.Delay(8000);
 
-                // Небольшая задержка на время установки соединения со шлюзом/модемом
-                await Task.Delay(10000);
-
-                TxtStatus.Text = "Считывание полученных текущих данных...";
+                TxtStatus.Text = "Считывание текущих значений...";
                 
                 await Task.Run(() =>
                 {
@@ -98,20 +96,25 @@ namespace LersMonitor
 
                         try
                         {
-                            // Чтение последней зафиксированной записи данных
-                            var lastData = point.Data.GetLastData();
-                            if (lastData != null)
+                            // Чтение последней записи текущих данных из архива текущих
+                            var archive = point.Data.Get(ArchiveType.Current, DateTime.Today.AddDays(-1), DateTime.Now);
+                            var lastRecord = archive.OrderByDescending(r => r.DateTime).FirstOrDefault();
+
+                            if (lastRecord != null)
                             {
-                                item.DeviceTime = lastData.DateTime;
-                                item.T1 = lastData.T_in;
-                                item.T2 = lastData.T_out;
-                                item.P1 = lastData.P_in;
-                                item.V1 = lastData.V_in;
-                                item.Status = "Данные получены";
+                                item.DeviceTime = lastRecord.DateTime;
+                                
+                                // Извлечение основных параметров
+                                if (lastRecord.GetValue(DataParameterType.T_in) is double t1) item.T1 = t1;
+                                if (lastRecord.GetValue(DataParameterType.T_out) is double t2) item.T2 = t2;
+                                if (lastRecord.GetValue(DataParameterType.P_in) is double p1) item.P1 = p1;
+                                if (lastRecord.GetValue(DataParameterType.V_in) is double v1) item.V1 = v1;
+
+                                item.Status = "Успешно";
                             }
                             else
                             {
-                                item.Status = "Нет данных";
+                                item.Status = "Нет данных в архиве";
                             }
                         }
                         catch (Exception ex)
@@ -122,12 +125,12 @@ namespace LersMonitor
                 });
 
                 GridResults.Items.Refresh();
-                TxtStatus.Text = "Готово.";
+                TxtStatus.Text = "Мониторинг завершен.";
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка при работе с опросом: {ex.Message}");
-                TxtStatus.Text = "Ошибка";
+                MessageBox.Show($"Ошибка во время запуска опроса: {ex.Message}");
+                TxtStatus.Text = "Сбой операции";
             }
         }
     }
