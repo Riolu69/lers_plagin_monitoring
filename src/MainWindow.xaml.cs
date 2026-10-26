@@ -67,7 +67,6 @@ namespace LersMonitor
                         if (_settings.PointLimits == null) 
                             _settings.PointLimits = new Dictionary<int, PointThresholds>();
 
-                        // Восстановление последних данных таблицы после перезапуска
                         if (_settings.LastResults != null && _settings.LastResults.Any())
                         {
                             foreach (var r in _settings.LastResults)
@@ -118,7 +117,6 @@ namespace LersMonitor
                 if (selectedPointIds != null)
                     _settings.SelectedPointIds = selectedPointIds;
 
-                // Сохраняем текущее состояние таблицы, чтобы не пропадало при закрытии
                 _settings.LastResults = _results.ToList();
 
                 var json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
@@ -133,7 +131,6 @@ namespace LersMonitor
             base.OnClosed(e);
         }
 
-        // --- ЛОГИКА ТЁМНОЙ ТЕМЫ ---
         private void ChkDarkMode_Click(object sender, RoutedEventArgs e)
         {
             bool isDark = ChkDarkMode.IsChecked == true;
@@ -141,7 +138,6 @@ namespace LersMonitor
             _settings.IsDarkMode = isDark;
             SaveUserSettings();
             
-            // Принудительно обновляем цвета таблицы
             foreach (var r in _results) r.RefreshColors();
         }
 
@@ -174,7 +170,6 @@ namespace LersMonitor
             }
         }
 
-        // --- ЛОГИКА ПОДКЛЮЧЕНИЯ И ФИЛЬТРАЦИИ ---
         private async void BtnConnect_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -297,7 +292,6 @@ namespace LersMonitor
 
                 _allPoints = _allPoints.OrderBy(p => p.NodeTitle).ThenBy(p => p.Title).ToList();
                 
-                // Заполняем выпадающие списки для умной фильтрации
                 var uniqueNodes = _allPoints.Select(p => p.NodeTitle).Distinct().OrderBy(n => n).ToList();
                 uniqueNodes.Insert(0, "Все объекты");
                 CmbNode.ItemsSource = uniqueNodes;
@@ -381,7 +375,6 @@ namespace LersMonitor
             }
         }
 
-        // --- ЛОГИКА НАСТРОЕК ДОПУСКОВ ---
         private void BtnSettings_Click(object sender, RoutedEventArgs e)
         {
             var selected = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
@@ -468,7 +461,6 @@ namespace LersMonitor
             return null;
         }
 
-        // --- ЛОГИКА ОПРОСА ---
         private static string ParseLersError(string jsonResponse, int statusCode)
         {
             try
@@ -557,7 +549,7 @@ namespace LersMonitor
                     }
                 }));
 
-                TxtStatus.Text = "Опрос запущен, ожидание ответа приборов (интерфейс свободен)...";
+                TxtStatus.Text = "Опрос запущен, ожидание ответа приборов...";
 
                 const int maxChecks = 25;
                 const int checkIntervalMs = 4000;
@@ -633,7 +625,7 @@ namespace LersMonitor
 
                 await Task.WhenAll(pollingTasks);
                 TxtStatus.Text = "Мониторинг завершен.";
-                SaveUserSettings(); // Сохраняем результаты сразу после окончания опроса
+                SaveUserSettings();
             }
             catch (Exception ex)
             {
@@ -774,7 +766,7 @@ namespace LersMonitor
 
         private Brush GetColor(double? val, double? min, double? max)
         {
-            var defaultColor = Application.Current.MainWindow.TryFindResource("LabelPrimary") as Brush ?? Brushes.Black;
+            var defaultColor = Application.Current.MainWindow?.TryFindResource("LabelPrimary") as Brush ?? Brushes.Black;
             if (val == null) return defaultColor;
             if (min.HasValue && val.Value < min.Value) return Brushes.Red;
             if (max.HasValue && val.Value > max.Value) return Brushes.Red;
