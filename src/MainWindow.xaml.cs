@@ -305,59 +305,69 @@ namespace LersMonitor
             try
             {
                 BtnStartMonitor.IsEnabled = false;
-                TxtStatus.Text = "Опрос приборов запущен...";
+                TxtStatus.Text = "Снимок текущих данных до опроса...";
 
-                // Запускаем независимый цикл для каждой точки, чтобы одна медленная точка не тормозила остальные
-                var tasks = selectedPoints.Select(async p =>
+                var initialTimes = new Dictionary<int, DateTime?>();
+                await Task.WhenAll(selectedPoints.Select(async p =>
                 {
-                    var vm = _results.FirstOrDefault(r => r.Id == p.Id);
-                    if (vm == null) return;
-
                     try
                     {
-                        // 1. Получаем время прибора до опроса
-                        DateTime? timeBefore = null;
-                        var resBefore = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
-                        if (resBefore.IsSuccessStatusCode)
+                        var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
+                        if (res.IsSuccessStatusCode)
                         {
-                            var jsonBefore = await resBefore.Content.ReadAsStringAsync();
-                            if (!string.IsNullOrWhiteSpace(jsonBefore) && jsonBefore.Trim() != "null")
+                            var json = await res.Content.ReadAsStringAsync();
+                            if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
                             {
-                                using var doc = JsonDocument.Parse(jsonBefore);
-                                timeBefore = TryGetDate(doc.RootElement, "dateTime", "deviceTime", "date");
+                                using var doc = JsonDocument.Parse(json);
+                                initialTimes[p.Id] = TryGetDate(doc.RootElement, "dateTime", "deviceTime", "date");
                             }
                         }
+                    }
+                    catch { }
+                }));
 
-                        // 2. Отправляем команду на запуск опроса
-                        vm.Status = "Запуск модема...";
-                        Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
+                TxtStatus.Text = "Запуск ручного опроса приборов...";
 
+                await Task.WhenAll(selectedPoints.Select(async p =>
+                {
+                    try
+                    {
                         var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{p.Id}/Currents?once=true");
                         pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
                         pollReq.Content.Headers.ContentLength = 0;
                         var pollRes = await _http.SendAsync(pollReq);
-
-                        // Если сервер ЛЭРС отклонил опрос (например, порт занят или модем не настроен)
-                        if (!pollRes.IsSuccessStatusCode)
+                        
+                        var vm = _results.FirstOrDefault(r => r.Id == p.Id);
+                        if (vm != null && !pollRes.IsSuccessStatusCode)
                         {
                             vm.Status = $"Сбой запуска ({(int)pollRes.StatusCode})";
-                            Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
-                            return;
                         }
+                    }
+                    catch { }
+                }));
 
-                        // 3. Цикл ожидания ответа прибора (увеличено до 100 секунд)
-                        const int maxChecks = 20; 
-                        const int checkIntervalMs = 5000;
+                TxtStatus.Text = "Опрос запущен, ожидание ответа приборов...";
 
-                        bool receivedNewData = false;
+                const int maxChecks = 20;
+                const int checkIntervalMs = 5000;
 
-                        for (int attempt = 1; attempt <= maxChecks; attempt++)
+                var pollingTasks = selectedPoints.Select(async p =>
+                {
+                    var vm = _results.FirstOrDefault(r => r.Id == p.Id);
+                    if (vm == null || vm.Status.StartsWith("Сбой запуска")) return;
+
+                    initialTimes.TryGetValue(p.Id, out var timeBefore);
+                    bool receivedNewData = false;
+
+                    for (int attempt = 1; attempt <= maxChecks; attempt++)
+                    {
+                        vm.Status = $"Связь с прибором ({attempt}/{maxChecks})...";
+                        Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
+
+                        await Task.Delay(checkIntervalMs);
+
+                        try
                         {
-                            vm.Status = $"Связь с прибором ({attempt}/{maxChecks})...";
-                            Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
-                            
-                            await Task.Delay(checkIntervalMs);
-
                             var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
                             if (res.IsSuccessStatusCode)
                             {
@@ -370,11 +380,11 @@ namespace LersMonitor
 
                                     bool isNew = timeBefore == null || (timeNow != null && timeNow > timeBefore);
 
-                                    // Если появились новые данные ИЛИ вышло время (показываем что есть)
                                     if (isNew || attempt == maxChecks)
                                     {
                                         vm.DeviceTime = timeNow;
                                         
+                                        // Извлекаем все доступные параметры
                                         vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
                                         vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
                                         vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
@@ -390,7 +400,6 @@ namespace LersMonitor
                                         
                                         vm.Q  = ExtractParameterValue(root, "q", "heat", "energy", "Q", "Q_in", "q_total");
 
-                                        // Если метка времени не сдвинулась, значит новых данных на приборе нет
                                         vm.Status = isNew ? "Опрошено успешно" : "Данные не изменились";
                                         receivedNewData = true;
                                         break;
@@ -398,23 +407,18 @@ namespace LersMonitor
                                 }
                             }
                         }
+                        catch { }
+                    }
 
-                        if (!receivedNewData)
-                        {
-                            vm.Status = "Таймаут (нет связи)";
-                        }
-                    }
-                    catch (Exception)
+                    if (!receivedNewData)
                     {
-                        vm.Status = "Ошибка сети";
+                        vm.Status = "Таймаут (нет связи)";
                     }
-                    finally
-                    {
-                        Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
-                    }
+
+                    Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
                 });
 
-                await Task.WhenAll(tasks);
+                await Task.WhenAll(pollingTasks);
                 TxtStatus.Text = "Мониторинг завершен.";
             }
             catch (Exception ex)
@@ -430,17 +434,17 @@ namespace LersMonitor
 
         private static double? ExtractParameterValue(JsonElement root, params string[] targetNames)
         {
+            // 1. Проверяем прямые свойства
             foreach (var name in targetNames)
             {
                 if (root.TryGetProperty(name, out var prop))
                 {
-                    if (prop.ValueKind == JsonValueKind.Number && prop.TryGetDouble(out double val))
-                        return val;
-                    if (prop.ValueKind == JsonValueKind.String && double.TryParse(prop.GetString(), out double sVal))
-                        return sVal;
+                    if (prop.ValueKind == JsonValueKind.Number && prop.TryGetDouble(out double val)) return val;
+                    if (prop.ValueKind == JsonValueKind.String && double.TryParse(prop.GetString(), out double sVal)) return sVal;
                 }
             }
 
+            // 2. Ищем внутри вложенных массивов (например, "values")
             if (root.ValueKind == JsonValueKind.Object)
             {
                 foreach (var prop in root.EnumerateObject())
@@ -452,25 +456,25 @@ namespace LersMonitor
                             if (item.ValueKind == JsonValueKind.Object)
                             {
                                 string typeName = "";
-                                if (item.TryGetProperty("type", out var tProp)) typeName = tProp.GetString() ?? "";
-                                if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("parameterType", out var ptProp)) typeName = ptProp.GetString() ?? "";
-                                if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("name", out var nProp)) typeName = nProp.GetString() ?? "";
-                                if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("title", out var titProp)) typeName = titProp.GetString() ?? "";
+                                
+                                // ВОССТАНОВЛЕНО: проверяем все возможные ключи, включая dataParameter (как в ЛЭРС)
+                                if (item.TryGetProperty("dataParameter", out var dpProp)) typeName = dpProp.ToString();
                                 if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("parameter", out var pProp)) typeName = pProp.ToString();
+                                if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("name", out var nProp)) typeName = nProp.ToString();
+                                if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("type", out var tProp)) typeName = tProp.ToString();
+                                if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("parameterType", out var ptProp)) typeName = ptProp.ToString();
+                                if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("title", out var titProp)) typeName = titProp.ToString();
 
                                 bool matchesName = targetNames.Any(tn => typeName.IndexOf(tn, StringComparison.OrdinalIgnoreCase) >= 0);
 
-                                if (matchesName || prop.Name.Equals("values", StringComparison.OrdinalIgnoreCase))
+                                if (matchesName)
                                 {
                                     if (item.TryGetProperty("value", out var valProp) || 
                                         item.TryGetProperty("val", out valProp) || 
                                         item.TryGetProperty("currentValue", out valProp))
                                     {
-                                        if (matchesName || targetNames.Length == 0)
-                                        {
-                                            if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out double v)) return v;
-                                            if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString(), out double sv)) return sv;
-                                        }
+                                        if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out double v)) return v;
+                                        if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString(), out double sv)) return sv;
                                     }
                                 }
                             }
