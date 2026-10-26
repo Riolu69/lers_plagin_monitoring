@@ -324,7 +324,7 @@
                         </StackPanel>
 
                         <!-- Список -->
-                        <ListBox Grid.Row="2" x:Name="ListPoints" SelectionMode="Extended" 
+                        <ListBox Grid.Row="2" x:Name="ListPoints" SelectionMode="Multiple" 
                                  DisplayMemberPath="DisplayName" BorderThickness="0" Background="Transparent"
                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                             <ListBox.ItemContainerStyle>
