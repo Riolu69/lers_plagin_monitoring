@@ -9,9 +9,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
-using Lers;
-using Lers.Core;
-using Lers.Networking;
 
 namespace LersMonitor
 {
@@ -19,7 +16,7 @@ namespace LersMonitor
 
     public partial class MainWindow : Window
     {
-        private LersServer? _server;
+        private object? _server;
         private readonly ObservableCollection<PointResultViewModel> _results = new();
         private UserSettings _settings = new();
 
@@ -59,7 +56,6 @@ namespace LersMonitor
             }
             catch
             {
-                // Ошибка чтения настроек — значения по умолчанию
             }
         }
 
@@ -129,25 +125,77 @@ namespace LersMonitor
                     return;
                 }
 
-                _server = new LersServer();
-                var auth = new BasicAuthenticationInfo(login, password);
+                // Инициализация LersServer через рефлексию для совместимости с любой версией сборки
+                var lersServerType = AppDomain.CurrentDomain.GetAssemblies()
+                    .SelectMany(a => { try { return a.GetTypes(); } catch { return Array.Empty<Type>(); } })
+                    .FirstOrDefault(t => t.Name == "LersServer");
 
-                await _server.ConnectAsync(host, port, auth);
+                if (lersServerType == null)
+                {
+                    throw new Exception("Библиотека Lers.Framework не найдена. Проверьте установку пакетов.");
+                }
+
+                _server = Activator.CreateInstance(lersServerType);
+
+                // Создание учетных данных
+                var authType = AppDomain.CurrentDomain.GetAssemblies()
+                    .SelectMany(a => { try { return a.GetTypes(); } catch { return Array.Empty<Type>(); } })
+                    .FirstOrDefault(t => t.Name == "BasicAuthenticationInfo");
+
+                object? auth = null;
+                if (authType != null)
+                {
+                    auth = Activator.CreateInstance(authType, login, password);
+                }
+
+                // Вызов метода Connect / ConnectAsync
+                var connectMethod = lersServerType.GetMethods()
+                    .FirstOrDefault(m => m.Name.StartsWith("Connect") && m.GetParameters().Length >= 3);
+
+                if (connectMethod == null)
+                {
+                    throw new Exception("Не найден подходящий метод Connect у LersServer.");
+                }
+
+                var connectResult = connectMethod.Invoke(_server, new object[] { host, port, auth! });
+                if (connectResult is Task task)
+                {
+                    await task;
+                }
 
                 SaveUserSettings();
 
                 TxtStatus.Text = "Загрузка точек учёта...";
 
-                var points = await _server.MeasurePoints.GetListAsync();
-                var pointsList = points.ToList();
+                // Получение точек учёта
+                var measurePointsProp = lersServerType.GetProperty("MeasurePoints");
+                var pointsMgr = measurePointsProp?.GetValue(_server);
+
+                var getListMethod = pointsMgr?.GetType().GetMethods()
+                    .FirstOrDefault(m => (m.Name == "GetList" || m.Name == "GetListAsync") && m.GetParameters().Length == 0);
+
+                object? rawPoints = getListMethod?.Invoke(pointsMgr, null);
+                if (rawPoints is Task t)
+                {
+                    await t;
+                    var resProp = t.GetType().GetProperty("Result");
+                    rawPoints = resProp?.GetValue(t);
+                }
+
+                var pointsList = ((IEnumerable)rawPoints!).Cast<object>().ToList();
 
                 ListPoints.ItemsSource = pointsList;
 
+                // Восстановление выбранных точек
                 if (_settings.SelectedPointIds != null && _settings.SelectedPointIds.Any())
                 {
-                    foreach (var p in pointsList.Where(p => _settings.SelectedPointIds.Contains(p.Id)))
+                    foreach (var p in pointsList)
                     {
-                        ListPoints.SelectedItems.Add(p);
+                        var idProp = p.GetType().GetProperty("Id");
+                        if (idProp != null && _settings.SelectedPointIds.Contains((int)idProp.GetValue(p)!))
+                        {
+                            ListPoints.SelectedItems.Add(p);
+                        }
                     }
                 }
 
@@ -173,30 +221,36 @@ namespace LersMonitor
 
         private async void BtnStartMonitor_Click(object sender, RoutedEventArgs e)
         {
-            var selectedPoints = ListPoints.SelectedItems.Cast<MeasurePoint>().ToList();
+            var selectedPoints = ListPoints.SelectedItems.Cast<object>().ToList();
             if (!selectedPoints.Any())
             {
                 MessageBox.Show("Выберите хотя бы одну точку учёта в списке слева.");
                 return;
             }
 
-            SaveUserSettings(selectedPoints.Select(p => p.Id).ToList());
-
+            var ids = new List<int>();
             _results.Clear();
+
             foreach (var point in selectedPoints)
             {
+                var id = (int)point.GetType().GetProperty("Id")!.GetValue(point)!;
+                var title = (string)point.GetType().GetProperty("Title")!.GetValue(point)!;
+                ids.Add(id);
+
                 _results.Add(new PointResultViewModel
                 {
-                    Id = point.Id,
-                    Title = point.Title,
+                    Id = id,
+                    Title = title,
                     Status = "В очереди..."
                 });
             }
 
+            SaveUserSettings(ids);
+
             try
             {
                 BtnStartMonitor.IsEnabled = false;
-                TxtStatus.Text = "Запуск опроса и чтение данных...";
+                TxtStatus.Text = "Запуск опроса и считывание текущих...";
 
                 var itemsToProcess = _results.ToList();
 
@@ -204,11 +258,11 @@ namespace LersMonitor
                 {
                     TryStartPoll(_server!, selectedPoints);
 
-                    await Task.Delay(5000);
+                    await Task.Delay(4000);
 
                     foreach (var item in itemsToProcess)
                     {
-                        var point = selectedPoints.FirstOrDefault(p => p.Id == item.Id);
+                        var point = selectedPoints.FirstOrDefault(p => (int)p.GetType().GetProperty("Id")!.GetValue(p)! == item.Id);
                         if (point == null) continue;
 
                         ReadPointCurrentData(point, item);
@@ -229,22 +283,27 @@ namespace LersMonitor
             }
         }
 
-        private void TryStartPoll(LersServer server, List<MeasurePoint> points)
+        private void TryStartPoll(object server, List<object> points)
         {
             try
             {
-                var pollMgr = server.Poll;
-                var pollType = pollMgr.GetType();
+                var pollProp = server.GetType().GetProperty("Poll");
+                var pollMgr = pollProp?.GetValue(server);
+                if (pollMgr == null) return;
 
+                var pollType = pollMgr.GetType();
                 var method = pollType.GetMethods()
                     .FirstOrDefault(m => m.Name.Contains("Poll") || m.Name.Contains("Start"));
 
                 if (method != null)
                 {
-                    var parameters = method.GetParameters();
-                    if (parameters.Length == 1 && parameters[0].ParameterType.IsAssignableFrom(typeof(MeasurePoint[])))
+                    var pars = method.GetParameters();
+                    if (pars.Length == 1)
                     {
-                        method.Invoke(pollMgr, new object[] { points.ToArray() });
+                        var elemType = pars[0].ParameterType.GetElementType() ?? typeof(object);
+                        var arr = Array.CreateInstance(elemType, points.Count);
+                        for (int i = 0; i < points.Count; i++) arr.SetValue(points[i], i);
+                        method.Invoke(pollMgr, new object[] { arr });
                     }
                 }
             }
@@ -253,17 +312,19 @@ namespace LersMonitor
             }
         }
 
-        private void ReadPointCurrentData(MeasurePoint point, PointResultViewModel vm)
+        private void ReadPointCurrentData(object point, PointResultViewModel vm)
         {
             try
             {
                 var refreshMethod = point.GetType().GetMethod("Refresh", Type.EmptyTypes);
                 refreshMethod?.Invoke(point, null);
 
-                object? dataObj = point.Data;
+                var dataProp = point.GetType().GetProperty("Data");
+                object? dataObj = dataProp?.GetValue(point);
+
                 if (dataObj == null)
                 {
-                    vm.Status = "Нет объекта Data";
+                    vm.Status = "Нет объекта данных";
                     return;
                 }
 
@@ -303,12 +364,11 @@ namespace LersMonitor
                     vm.T2 = GetPropValue<double?>(record, "T_out", "T2", "TemperatureOut");
                     vm.P1 = GetPropValue<double?>(record, "P_in", "P1", "PressureIn");
                     vm.V1 = GetPropValue<double?>(record, "V_in", "V1", "FlowIn", "VolumeIn");
-                    vm.Status = "Данные получены";
+                    vm.Status = "Опрошено";
                 }
                 else
                 {
-                    var availableMethods = string.Join(", ", dataType.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly).Select(m => m.Name).Distinct());
-                    vm.Status = $"Методы Data: {availableMethods}";
+                    vm.Status = "Ожидание данных...";
                 }
             }
             catch (Exception ex)
