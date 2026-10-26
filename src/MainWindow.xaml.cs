@@ -7,9 +7,9 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace LersMonitor
 {
@@ -21,6 +21,7 @@ namespace LersMonitor
         private string? _token;
         private string _baseUrl = "";
 
+        private List<MeasurePointItem> _allPoints = new();
         private readonly ObservableCollection<PointResultViewModel> _results = new();
         private UserSettings _settings = new();
 
@@ -115,10 +116,8 @@ namespace LersMonitor
                     return;
                 }
 
-                // Префикс API из OpenLuch: /api/v1
                 _baseUrl = $"http://{host}:{port}/api/v1";
 
-                // 1. Вход: POST /api/v1/Login с application name
                 var loginPayload = JsonSerializer.Serialize(new 
                 { 
                     login = login, 
@@ -134,71 +133,105 @@ namespace LersMonitor
                 var loginResponseJson = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
-                {
                     throw new Exception($"Код {(int)response.StatusCode}: {loginResponseJson}");
+
+                using (var doc = JsonDocument.Parse(loginResponseJson))
+                {
+                    if (doc.RootElement.TryGetProperty("token", out var tokenProp))
+                        _token = tokenProp.GetString();
+                    else
+                        _token = loginResponseJson.Trim('"');
                 }
-
-                using var doc = JsonDocument.Parse(loginResponseJson);
-                if (doc.RootElement.TryGetProperty("token", out var tokenProp))
-                    _token = tokenProp.GetString();
-                else
-                    _token = loginResponseJson.Trim('"');
-
-                if (string.IsNullOrEmpty(_token))
-                    throw new Exception("Сервер не вернул токен авторизации.");
 
                 _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _token);
 
                 SaveUserSettings();
 
-                // 2. Запрос списка точек учёта: GET /api/v1/Core/MeasurePoints?type=Regular&getCustomers=true
-                TxtStatus.Text = "Загрузка точек учёта...";
+                TxtStatus.Text = "Загрузка объектов и точек учёта...";
+
+                // Параллельная или последовательная загрузка справочников
+                var nodeTitlesById = new Dictionary<int, string>();
+                try
+                {
+                    var nodesRes = await _http.GetAsync($"{_baseUrl}/Core/Nodes");
+                    if (nodesRes.IsSuccessStatusCode)
+                    {
+                        var nodesJson = await nodesRes.Content.ReadAsStringAsync();
+                        using var nDoc = JsonDocument.Parse(nodesJson);
+                        
+                        JsonElement nodesArr = nDoc.RootElement.ValueKind == JsonValueKind.Array 
+                            ? nDoc.RootElement 
+                            : (nDoc.RootElement.TryGetProperty("nodes", out var nProp) ? nProp : nDoc.RootElement);
+
+                        foreach (var node in nodesArr.EnumerateArray())
+                        {
+                            int id = node.TryGetProperty("id", out var idElem) ? idElem.GetInt32() : 0;
+                            string title = node.TryGetProperty("title", out var titleElem) ? titleElem.GetString() ?? "" : "";
+                            if (id > 0 && !string.IsNullOrEmpty(title))
+                            {
+                                nodeTitlesById[id] = title;
+                            }
+                        }
+                    }
+                }
+                catch { }
+
                 var pointsRes = await _http.GetAsync($"{_baseUrl}/Core/MeasurePoints?type=Regular&getCustomers=true");
                 pointsRes.EnsureSuccessStatusCode();
 
                 var pointsJson = await pointsRes.Content.ReadAsStringAsync();
+                _allPoints = new List<MeasurePointItem>();
                 
-                // В OpenLuch ответ приходит в обертке: { "measurePoints": [...] }
-                var pointsList = new List<MeasurePointItem>();
-                using var pDoc = JsonDocument.Parse(pointsJson);
-                
-                JsonElement arrayElement;
-                if (pDoc.RootElement.ValueKind == JsonValueKind.Array)
+                using (var pDoc = JsonDocument.Parse(pointsJson))
                 {
-                    arrayElement = pDoc.RootElement;
-                }
-                else if (pDoc.RootElement.TryGetProperty("measurePoints", out var mProp))
-                {
-                    arrayElement = mProp;
-                }
-                else
-                {
-                    arrayElement = pDoc.RootElement;
-                }
+                    JsonElement arrayElement = pDoc.RootElement.ValueKind == JsonValueKind.Array
+                        ? pDoc.RootElement
+                        : (pDoc.RootElement.TryGetProperty("measurePoints", out var mProp) ? mProp : pDoc.RootElement);
 
-                foreach (var item in arrayElement.EnumerateArray())
-                {
-                    int id = item.TryGetProperty("id", out var idElem) ? idElem.GetInt32() : 0;
-                    string title = item.TryGetProperty("title", out var titleElem) ? titleElem.GetString() ?? "" : $"Точка #{id}";
-                    if (id > 0)
+                    foreach (var item in arrayElement.EnumerateArray())
                     {
-                        pointsList.Add(new MeasurePointItem { Id = id, Title = title });
+                        int id = item.TryGetProperty("id", out var idElem) ? idElem.GetInt32() : 0;
+                        string pointTitle = item.TryGetProperty("title", out var titleElem) ? titleElem.GetString() ?? "" : "Точка";
+                        
+                        int nodeId = 0;
+                        if (item.TryGetProperty("nodeId", out var nodeIdElem))
+                            nodeId = nodeIdElem.GetInt32();
+
+                        string nodeTitle = "";
+                        if (item.TryGetProperty("nodeTitle", out var nodeTitleElem))
+                            nodeTitle = nodeTitleElem.GetString() ?? "";
+
+                        if (string.IsNullOrEmpty(nodeTitle) && nodeId > 0 && nodeTitlesById.ContainsKey(nodeId))
+                            nodeTitle = nodeTitlesById[nodeId];
+
+                        if (string.IsNullOrEmpty(nodeTitle))
+                            nodeTitle = "Объект";
+
+                        if (id > 0)
+                        {
+                            _allPoints.Add(new MeasurePointItem 
+                            { 
+                                Id = id, 
+                                Title = pointTitle, 
+                                NodeTitle = nodeTitle 
+                            });
+                        }
                     }
                 }
 
-                ListPoints.ItemsSource = pointsList;
+                _allPoints = _allPoints.OrderBy(p => p.NodeTitle).ThenBy(p => p.Title).ToList();
+                ApplyPointsFilter();
 
-                // Восстановление выбранных точек
                 if (_settings.SelectedPointIds != null && _settings.SelectedPointIds.Any())
                 {
-                    foreach (var p in pointsList.Where(p => _settings.SelectedPointIds.Contains(p.Id)))
+                    foreach (var p in _allPoints.Where(p => _settings.SelectedPointIds.Contains(p.Id)))
                     {
                         ListPoints.SelectedItems.Add(p);
                     }
                 }
 
                 BtnStartMonitor.IsEnabled = true;
-                TxtStatus.Text = $"Подключено к {host}:{port}. Загружено точек: {pointsList.Count}";
+                TxtStatus.Text = $"Подключено к {host}:{port}. Загружено точек: {_allPoints.Count}";
             }
             catch (Exception ex)
             {
@@ -208,6 +241,26 @@ namespace LersMonitor
             finally
             {
                 BtnConnect.IsEnabled = true;
+            }
+        }
+
+        private void TxtSearch_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            ApplyPointsFilter();
+        }
+
+        private void ApplyPointsFilter()
+        {
+            string query = TxtSearch.Text.Trim().ToLower();
+            if (string.IsNullOrEmpty(query))
+            {
+                ListPoints.ItemsSource = _allPoints;
+            }
+            else
+            {
+                ListPoints.ItemsSource = _allPoints
+                    .Where(p => p.DisplayName.ToLower().Contains(query))
+                    .ToList();
             }
         }
 
@@ -229,75 +282,111 @@ namespace LersMonitor
                 {
                     Id = p.Id,
                     Title = p.Title,
-                    Status = "Ожидание..."
+                    NodeTitle = p.NodeTitle,
+                    Status = "Подготовка..."
                 });
             }
 
             try
             {
                 BtnStartMonitor.IsEnabled = false;
+                TxtStatus.Text = "Снимок текущих данных до опроса...";
 
-                // 1. Запуск разового опроса для каждой точки по схеме OpenLuch:
-                // POST /api/v1/Poll/MeasurePoints/{id}/Currents?once=true с Content-Length: 0
-                foreach (var item in _results)
+                // Шаг 1. ПАРАЛЛЕЛЬНО запрашиваем время записей ДО опроса (как в PointReadingsModel)
+                var initialTimes = new Dictionary<int, DateTime?>();
+                await Task.WhenAll(selectedPoints.Select(async p =>
                 {
                     try
                     {
-                        TxtStatus.Text = $"Запуск опроса прибора для: {item.Title}...";
-                        
-                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{item.Id}/Currents?once=true");
-                        pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
-                        pollReq.Content.Headers.ContentLength = 0;
-
-                        await _http.SendAsync(pollReq);
-                    }
-                    catch
-                    {
-                        // Если на сервере опрос не настроен, продолжаем считывание последнего значения
-                    }
-                }
-
-                TxtStatus.Text = "Ожидание ответа приборов (5 сек)...";
-                await Task.Delay(5000);
-
-                // 2. Чтение последних данных по схеме OpenLuch:
-                // GET /api/v1/Data/MeasurePoints/{id}/Consumption/Last
-                foreach (var item in _results)
-                {
-                    try
-                    {
-                        var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{item.Id}/Consumption/Last");
+                        var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
                         if (res.IsSuccessStatusCode)
                         {
                             var json = await res.Content.ReadAsStringAsync();
-                            if (string.IsNullOrWhiteSpace(json) || json.Trim() == "null")
+                            if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
                             {
-                                item.Status = "Нет данных на сервере";
-                                continue;
+                                using var doc = JsonDocument.Parse(json);
+                                initialTimes[p.Id] = TryGetDate(doc.RootElement, "dateTime", "deviceTime", "date");
                             }
-
-                            using var doc = JsonDocument.Parse(json);
-                            var root = doc.RootElement;
-
-                            item.DeviceTime = TryGetDate(root, "dateTime", "deviceTime");
-                            item.T1 = TryGetDouble(root, "t_in", "t1");
-                            item.T2 = TryGetDouble(root, "t_out", "t2");
-                            item.P1 = TryGetDouble(root, "p_in", "p1");
-                            item.V1 = TryGetDouble(root, "v_in", "v1", "m_in");
-                            item.Status = "Опрошено";
-                        }
-                        else
-                        {
-                            item.Status = $"Код {res.StatusCode}";
                         }
                     }
-                    catch (Exception ex)
+                    catch { }
+                }));
+
+                TxtStatus.Text = "Запуск ручного опроса приборов...";
+
+                // Шаг 2. ПАРАЛЛЕЛЬНО отправляем команды на опрос для всех выбранных точек
+                await Task.WhenAll(selectedPoints.Select(async p =>
+                {
+                    try
                     {
-                        item.Status = $"Ошибка: {ex.Message}";
+                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{p.Id}/Currents?once=true");
+                        pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
+                        pollReq.Content.Headers.ContentLength = 0;
+                        await _http.SendAsync(pollReq);
                     }
-                }
+                    catch { }
+                }));
 
-                GridResults.Items.Refresh();
+                TxtStatus.Text = "Опрос запущен, ожидание новых данных...";
+
+                // Шаг 3. ПАРАЛЛЕЛЬНЫЙ ПОЛЛИНГ (как в PointPollModel): проверяем каждую точку отдельно
+                const int maxChecks = 8;
+                const int checkIntervalMs = 3000;
+
+                var pollingTasks = selectedPoints.Select(async p =>
+                {
+                    var vm = _results.FirstOrDefault(r => r.Id == p.Id);
+                    if (vm == null) return;
+
+                    initialTimes.TryGetValue(p.Id, out var timeBefore);
+                    bool receivedNewData = false;
+
+                    for (int attempt = 1; attempt <= maxChecks; attempt++)
+                    {
+                        vm.Status = $"Опрос ({attempt}/{maxChecks})...";
+                        await Task.Delay(checkIntervalMs);
+
+                        try
+                        {
+                            var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
+                            if (res.IsSuccessStatusCode)
+                            {
+                                var json = await res.Content.ReadAsStringAsync();
+                                if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                                {
+                                    using var doc = JsonDocument.Parse(json);
+                                    var root = doc.RootElement;
+                                    var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
+
+                                    // Проверка: появилась ли запись новее, чем была до опроса (или данных вообще не было)
+                                    bool isNew = timeBefore == null || (timeNow != null && timeNow > timeBefore);
+
+                                    if (isNew || attempt == maxChecks)
+                                    {
+                                        vm.DeviceTime = timeNow;
+                                        vm.T1 = TryGetDouble(root, "t_in", "t1", "temperatureIn");
+                                        vm.T2 = TryGetDouble(root, "t_out", "t2", "temperatureOut");
+                                        vm.P1 = TryGetDouble(root, "p_in", "p1", "pressureIn");
+                                        vm.V1 = TryGetDouble(root, "v_in", "v1", "m_in", "volume1");
+                                        vm.Status = isNew ? "Опрошено успешно" : "Таймаут (старые данные)";
+                                        receivedNewData = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+
+                    if (!receivedNewData)
+                    {
+                        vm.Status = "Нет ответа";
+                    }
+
+                    Application.Current.Dispatcher.Invoke(() => GridResults.Items.Refresh());
+                });
+
+                await Task.WhenAll(pollingTasks);
                 TxtStatus.Text = "Мониторинг завершен.";
             }
             catch (Exception ex)
@@ -346,6 +435,8 @@ namespace LersMonitor
     {
         public int Id { get; set; }
         public string Title { get; set; } = string.Empty;
+        public string NodeTitle { get; set; } = string.Empty;
+        public string DisplayName => $"{NodeTitle} — {Title}";
     }
 
     public class UserSettings
@@ -361,6 +452,7 @@ namespace LersMonitor
     public class PointResultViewModel
     {
         public int Id { get; set; }
+        public string NodeTitle { get; set; } = string.Empty;
         public string Title { get; set; } = string.Empty;
         public DateTime? DeviceTime { get; set; }
         public double? T1 { get; set; }
