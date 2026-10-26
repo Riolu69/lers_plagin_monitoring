@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using Lers;
 using Lers.Core;
+using Lers.Data;
 using Lers.Networking;
 using Lers.Poll;
 
@@ -32,10 +33,8 @@ namespace LersMonitor
                 
                 var auth = new BasicAuthenticationInfo(TxtLogin.Text, TxtPassword.Password);
                 
-                // Подключение к серверу ЛЭРС
                 await Task.Run(() => _server.Connect(TxtHost.Text, 10000, auth));
 
-                // Получение списка точек учета
                 var points = await Task.Run(() => _server.MeasurePoints.GetList());
                 ListPoints.ItemsSource = points.ToList();
 
@@ -73,37 +72,23 @@ namespace LersMonitor
             {
                 TxtStatus.Text = "Запуск ручного опроса...";
 
-                // Формируем параметры опроса текущих данных
-                var options = new ManualPollOptions
+                // Постановка точек в очередь опроса через PollManager
+                await Task.Run(() =>
                 {
-                    Data = ManualPollData.Current
-                };
-
-                foreach (var point in selectedPoints)
-                {
-                    options.MeasurePoints.Add(point);
-                }
-
-                // Запуск опроса
-                var session = await Task.Run(() => _server!.Poll.StartManualPoll(options));
-
-                // Ожидание завершения опроса
-                while (true)
-                {
-                    await Task.Run(() => session.Refresh());
-                    TxtStatus.Text = $"Опрос... Статус: {session.Status}";
-
-                    if (session.IsFinished)
+                    foreach (var point in selectedPoints)
                     {
-                        break;
+                        // Ставим опрос текущих данных по прибору точки
+                        _server!.Poll.Queue(point, PollAction.Current);
                     }
+                });
 
-                    await Task.Delay(1500);
-                }
+                TxtStatus.Text = "Опрос поставлен в очередь. Ожидание завершения (10 сек)...";
 
-                TxtStatus.Text = "Считывание текущих значений...";
+                // Небольшая задержка на время установки соединения со шлюзом/модемом
+                await Task.Delay(10000);
+
+                TxtStatus.Text = "Считывание полученных текущих данных...";
                 
-                // Считываем обновленные текущие данные по точкам
                 await Task.Run(() =>
                 {
                     foreach (var item in _results)
@@ -113,15 +98,16 @@ namespace LersMonitor
 
                         try
                         {
-                            var current = point.Data.GetCurrentData();
-                            if (current != null)
+                            // Чтение последней зафиксированной записи данных
+                            var lastData = point.Data.GetLastData();
+                            if (lastData != null)
                             {
-                                item.DeviceTime = current.DeviceTime;
-                                item.T1 = current.T_in;
-                                item.T2 = current.T_out;
-                                item.P1 = current.P_in;
-                                item.V1 = current.V_in;
-                                item.Status = "Опрошено успешно";
+                                item.DeviceTime = lastData.DateTime;
+                                item.T1 = lastData.T_in;
+                                item.T2 = lastData.T_out;
+                                item.P1 = lastData.P_in;
+                                item.V1 = lastData.V_in;
+                                item.Status = "Данные получены";
                             }
                             else
                             {
@@ -136,12 +122,12 @@ namespace LersMonitor
                 });
 
                 GridResults.Items.Refresh();
-                TxtStatus.Text = "Мониторинг завершен.";
+                TxtStatus.Text = "Готово.";
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка во время опроса: {ex.Message}");
-                TxtStatus.Text = "Сбой опроса";
+                MessageBox.Show($"Ошибка при работе с опросом: {ex.Message}");
+                TxtStatus.Text = "Ошибка";
             }
         }
     }
