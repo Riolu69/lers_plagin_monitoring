@@ -100,7 +100,7 @@
                                         <DropShadowEffect BlurRadius="15" ShadowDepth="3" Opacity="0.15"/>
                                     </Border.Effect>
                                     <ScrollViewer x:Name="DropDownScrollViewer" Margin="0" SnapsToDevicePixels="True">
-                                        <ItemsPresenter x:Name="ItemsPresenter" KeyboardNavigation.ControlTabIndex="1" SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+                                        <ItemsPresenter x:Name="ItemsPresenter" SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
                                     </ScrollViewer>
                                 </Border>
                             </Popup>
