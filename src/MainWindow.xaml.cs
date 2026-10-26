@@ -359,10 +359,13 @@ namespace LersMonitor
                                     if (isNew || attempt == maxChecks)
                                     {
                                         vm.DeviceTime = timeNow;
-                                        vm.T1 = TryGetDouble(root, "t_in", "t1", "temperatureIn");
-                                        vm.T2 = TryGetDouble(root, "t_out", "t2", "temperatureOut");
-                                        vm.P1 = TryGetDouble(root, "p_in", "p1", "pressureIn");
-                                        vm.V1 = TryGetDouble(root, "v_in", "v1", "m_in", "volume1");
+                                        
+                                        // Универсальное извлечение параметров из корневых свойств или вложенных словарей ЛЭРС
+                                        vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in");
+                                        vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out");
+                                        vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in");
+                                        vm.V1 = ExtractParameterValue(root, "v_in", "v1", "m_in", "volume1", "V1", "V_in", "M1");
+
                                         vm.Status = isNew ? "Опрошено успешно" : "Таймаут (старые данные)";
                                         receivedNewData = true;
                                         break;
@@ -395,11 +398,12 @@ namespace LersMonitor
             }
         }
 
-        private static double? TryGetDouble(JsonElement elem, params string[] names)
+        private static double? ExtractParameterValue(JsonElement root, params string[] targetNames)
         {
-            foreach (var n in names)
+            // 1. Проверяем прямые свойства в корне JSON объекта
+            foreach (var name in targetNames)
             {
-                if (elem.TryGetProperty(n, out var prop))
+                if (root.TryGetProperty(name, out var prop))
                 {
                     if (prop.ValueKind == JsonValueKind.Number && prop.TryGetDouble(out double val))
                         return val;
@@ -407,6 +411,37 @@ namespace LersMonitor
                         return sVal;
                 }
             }
+
+            // 2. Если ЛЭРС возвращает коллекцию параметров (например, массив объектов с ключами "parameterType" / "value")
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var prop in root.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var item in prop.Value.EnumerateArray())
+                        {
+                            if (item.ValueKind == JsonValueKind.Object)
+                            {
+                                string typeName = "";
+                                if (item.TryGetProperty("type", out var tProp)) typeName = tProp.GetString() ?? "";
+                                if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("parameterType", out var ptProp)) typeName = ptProp.GetString() ?? "";
+                                if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("name", out var nProp)) typeName = nProp.GetString() ?? "";
+
+                                if (targetNames.Any(tn => typeName.IndexOf(tn, StringComparison.OrdinalIgnoreCase) >= 0))
+                                {
+                                    if (item.TryGetProperty("value", out var valProp) || item.TryGetProperty("val", out valProp))
+                                    {
+                                        if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out double v)) return v;
+                                        if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString(), out double sv)) return sv;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             return null;
         }
 
