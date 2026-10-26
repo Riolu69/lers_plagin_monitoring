@@ -149,7 +149,6 @@ namespace LersMonitor
 
                 TxtStatus.Text = "Загрузка объектов и точек учёта...";
 
-                // Параллельная или последовательная загрузка справочников
                 var nodeTitlesById = new Dictionary<int, string>();
                 try
                 {
@@ -292,7 +291,6 @@ namespace LersMonitor
                 BtnStartMonitor.IsEnabled = false;
                 TxtStatus.Text = "Снимок текущих данных до опроса...";
 
-                // Шаг 1. ПАРАЛЛЕЛЬНО запрашиваем время записей ДО опроса (как в PointReadingsModel)
                 var initialTimes = new Dictionary<int, DateTime?>();
                 await Task.WhenAll(selectedPoints.Select(async p =>
                 {
@@ -314,7 +312,6 @@ namespace LersMonitor
 
                 TxtStatus.Text = "Запуск ручного опроса приборов...";
 
-                // Шаг 2. ПАРАЛЛЕЛЬНО отправляем команды на опрос для всех выбранных точек
                 await Task.WhenAll(selectedPoints.Select(async p =>
                 {
                     try
@@ -329,7 +326,6 @@ namespace LersMonitor
 
                 TxtStatus.Text = "Опрос запущен, ожидание новых данных...";
 
-                // Шаг 3. ПАРАЛЛЕЛЬНЫЙ ПОЛЛИНГ (как в PointPollModel): проверяем каждую точку отдельно
                 const int maxChecks = 8;
                 const int checkIntervalMs = 3000;
 
@@ -358,7 +354,6 @@ namespace LersMonitor
                                     var root = doc.RootElement;
                                     var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
 
-                                    // Проверка: появилась ли запись новее, чем была до опроса (или данных вообще не было)
                                     bool isNew = timeBefore == null || (timeNow != null && timeNow > timeBefore);
 
                                     if (isNew || attempt == maxChecks)
