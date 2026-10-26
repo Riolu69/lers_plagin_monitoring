@@ -106,6 +106,44 @@
             <Setter Property="Background" Value="{StaticResource AccentGreen}"/>
         </Style>
 
+        <!-- СОВРЕМЕННЫЕ ЧЕКБОКСЫ -->
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource LabelPrimary}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,12,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <StackPanel Orientation="Horizontal" Background="Transparent">
+                            <Border x:Name="checkBoxBorder" Width="18" Height="18" 
+                                    Background="{StaticResource InputBackground}" 
+                                    BorderBrush="{StaticResource BorderBrushColor}" 
+                                    BorderThickness="1.5" CornerRadius="5" 
+                                    VerticalAlignment="Center" Margin="0,0,6,0">
+                                <Path x:Name="checkMark" Data="M3.5,9.5 L7.5,13.5 L14.5,4.5" 
+                                      Stroke="White" StrokeThickness="2.2" 
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                      Visibility="Hidden" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="checkBoxBorder" Property="Background" Value="{StaticResource AccentBlue}"/>
+                                <Setter TargetName="checkBoxBorder" Property="BorderBrush" Value="{StaticResource AccentBlue}"/>
+                                <Setter TargetName="checkMark" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="checkBoxBorder" Property="BorderBrush" Value="{StaticResource AccentBlue}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="DataGrid">
             <Setter Property="Background" Value="{StaticResource CardBackground}"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -143,181 +181,267 @@
         </Style>
     </Window.Resources>
 
-    <Grid Margin="20">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+    <Grid>
+        <!-- Основной интерфейс -->
+        <Grid Margin="20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-        <!-- Верхняя панель -->
-        <Border Grid.Row="0" Background="{StaticResource CardBackground}" CornerRadius="14" Padding="16,14" Margin="0,0,0,16">
-            <Border.Effect>
-                <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/>
-            </Border.Effect>
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <StackPanel Margin="0,0,12,0">
-                        <TextBlock Text="Сервер" FontSize="11" Foreground="{StaticResource LabelSecondary}" Margin="2,0,0,4"/>
-                        <TextBox x:Name="TxtHost" Width="130" Text="localhost"/>
-                    </StackPanel>
-                    <StackPanel Margin="0,0,12,0">
-                        <TextBlock Text="Порт" FontSize="11" Foreground="{StaticResource LabelSecondary}" Margin="2,0,0,4"/>
-                        <TextBox x:Name="TxtPort" Width="65" Text="10000"/>
-                    </StackPanel>
-                    <StackPanel Margin="0,0,12,0">
-                        <TextBlock Text="Логин" FontSize="11" Foreground="{StaticResource LabelSecondary}" Margin="2,0,0,4"/>
-                        <TextBox x:Name="TxtLogin" Width="100"/>
-                    </StackPanel>
-                    <StackPanel Margin="0,0,14,0">
-                        <TextBlock Text="Пароль" FontSize="11" Foreground="{StaticResource LabelSecondary}" Margin="2,0,0,4"/>
-                        <PasswordBox x:Name="TxtPassword" Width="100"/>
-                    </StackPanel>
-                    <CheckBox x:Name="ChkRemember" Content="Запомнить" IsChecked="True" 
-                              VerticalAlignment="Bottom" Margin="0,0,10,8" 
-                              FontSize="12" Foreground="{StaticResource LabelSecondary}"/>
-                </StackPanel>
-
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="0,0,0,1">
-                    <Button x:Name="BtnConnect" Content="Подключиться" 
-                            Style="{StaticResource ApplePrimaryButton}" 
-                            Margin="0,0,10,0" Click="BtnConnect_Click"/>
-                    <Button x:Name="BtnStartMonitor" Content="Опросить выбранные" 
-                            Style="{StaticResource AppleGreenButton}" 
-                            Click="BtnStartMonitor_Click" IsEnabled="False"/>
-                </StackPanel>
-            </Grid>
-        </Border>
-
-        <!-- Основная область -->
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="380"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-
-            <!-- Левая карточка: Точки учёта -->
-            <Border Grid.Column="0" Background="{StaticResource CardBackground}" CornerRadius="14" Margin="0,0,8,0" Padding="14">
+            <!-- Верхняя панель -->
+            <Border Grid.Row="0" Background="{StaticResource CardBackground}" CornerRadius="14" Padding="16,14" Margin="0,0,0,16">
                 <Border.Effect>
                     <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/>
                 </Border.Effect>
                 <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="Объекты и точки учёта" FontWeight="SemiBold" FontSize="14" 
-                               Foreground="{StaticResource LabelPrimary}" Margin="2,0,0,8"/>
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                        <StackPanel Margin="0,0,12,0">
+                            <TextBlock Text="Сервер" FontSize="11" Foreground="{StaticResource LabelSecondary}" Margin="2,0,0,4"/>
+                            <TextBox x:Name="TxtHost" Width="130" Text="localhost"/>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,12,0">
+                            <TextBlock Text="Порт" FontSize="11" Foreground="{StaticResource LabelSecondary}" Margin="2,0,0,4"/>
+                            <TextBox x:Name="TxtPort" Width="65" Text="10000"/>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,12,0">
+                            <TextBlock Text="Логин" FontSize="11" Foreground="{StaticResource LabelSecondary}" Margin="2,0,0,4"/>
+                            <TextBox x:Name="TxtLogin" Width="100"/>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,14,0">
+                            <TextBlock Text="Пароль" FontSize="11" Foreground="{StaticResource LabelSecondary}" Margin="2,0,0,4"/>
+                            <PasswordBox x:Name="TxtPassword" Width="100"/>
+                        </StackPanel>
+                        <CheckBox x:Name="ChkRemember" Content="Запомнить" IsChecked="True" VerticalAlignment="Bottom" Margin="0,0,10,8"/>
+                    </StackPanel>
 
-                    <TextBox Grid.Row="1" x:Name="TxtSearch" Margin="0,0,0,10" Padding="8,5" 
-                             TextChanged="TxtSearch_TextChanged" />
-
-                    <ListBox Grid.Row="2" x:Name="ListPoints" SelectionMode="Multiple" 
-                             DisplayMemberPath="DisplayName" BorderThickness="0" Background="Transparent"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                        <ListBox.ItemContainerStyle>
-                            <Style TargetType="ListBoxItem">
-                                <Setter Property="Padding" Value="8,8"/>
-                                <Setter Property="Margin" Value="0,2"/>
-                                <Setter Property="Cursor" Value="Hand"/>
-                                <Setter Property="Template">
-                                    <Setter.Value>
-                                        <ControlTemplate TargetType="ListBoxItem">
-                                            <Border x:Name="bd" Background="Transparent" CornerRadius="8" Padding="{TemplateBinding Padding}">
-                                                <ContentPresenter/>
-                                            </Border>
-                                            <ControlTemplate.Triggers>
-                                                <Trigger Property="IsMouseOver" Value="True">
-                                                    <Setter TargetName="bd" Property="Background" Value="#F2F2F7"/>
-                                                </Trigger>
-                                                <Trigger Property="IsSelected" Value="True">
-                                                    <Setter TargetName="bd" Property="Background" Value="#E8F2FE"/>
-                                                </Trigger>
-                                            </ControlTemplate.Triggers>
-                                        </ControlTemplate>
-                                    </Setter.Value>
-                                </Setter>
-                            </Style>
-                        </ListBox.ItemContainerStyle>
-                    </ListBox>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="0,0,0,1">
+                        <Button x:Name="BtnConnect" Content="Подключиться" 
+                                Style="{StaticResource ApplePrimaryButton}" 
+                                Margin="0,0,10,0" Click="BtnConnect_Click"/>
+                        
+                        <Button x:Name="BtnSettings" Content="⚙ Настроить границы" 
+                                Style="{StaticResource ApplePrimaryButton}" Background="#8E8E93"
+                                Margin="0,0,10,0" Click="BtnSettings_Click"/>
+                                
+                        <Button x:Name="BtnStartMonitor" Content="Опросить выбранные" 
+                                Style="{StaticResource AppleGreenButton}" 
+                                Click="BtnStartMonitor_Click" IsEnabled="False"/>
+                    </StackPanel>
                 </Grid>
             </Border>
 
-            <!-- Правая карточка: Таблица и фильтр колонок -->
-            <Border Grid.Column="1" Background="{StaticResource CardBackground}" CornerRadius="14" Margin="8,0,0,0" Padding="14">
-                <Border.Effect>
-                    <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/>
-                </Border.Effect>
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
+            <!-- Основная область -->
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="380"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
 
-                    <Grid Grid.Row="0" Margin="2,0,0,12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        
-                        <TextBlock Grid.Column="0" Text="Текущие параметры" FontWeight="SemiBold" FontSize="14" 
-                                   Foreground="{StaticResource LabelPrimary}" VerticalAlignment="Center"/>
-                        
-                        <!-- Фильтры отображения колонок -->
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <TextBlock Text="Скрыть/Показать:" FontSize="12" Foreground="{StaticResource LabelSecondary}" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                            <CheckBox Content="T1" IsChecked="True" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
-                            <CheckBox Content="T2" IsChecked="True" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
-                            <CheckBox Content="T3" IsChecked="False" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
-                            <CheckBox Content="P1" IsChecked="True" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
-                            <CheckBox Content="P2" IsChecked="False" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
-                            <CheckBox Content="V1" IsChecked="True" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
-                            <CheckBox Content="V2" IsChecked="False" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
-                            <CheckBox Content="M1" IsChecked="False" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
-                            <CheckBox Content="M2" IsChecked="False" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
-                            <CheckBox Content="Q"  IsChecked="False" Margin="0,0,0,0" Click="ColumnToggle_Click"/>
-                        </StackPanel>
+                <!-- Левая карточка -->
+                <Border Grid.Column="0" Background="{StaticResource CardBackground}" CornerRadius="14" Margin="0,0,8,0" Padding="14">
+                    <Border.Effect>
+                        <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/>
+                    </Border.Effect>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Text="Объекты и точки учёта" FontWeight="SemiBold" FontSize="14" 
+                                   Foreground="{StaticResource LabelPrimary}" Margin="2,0,0,8"/>
+
+                        <TextBox Grid.Row="1" x:Name="TxtSearch" Margin="0,0,0,10" Padding="8,5" 
+                                 TextChanged="TxtSearch_TextChanged" />
+
+                        <ListBox Grid.Row="2" x:Name="ListPoints" SelectionMode="Multiple" 
+                                 DisplayMemberPath="DisplayName" BorderThickness="0" Background="Transparent"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="Padding" Value="8,8"/>
+                                    <Setter Property="Margin" Value="0,2"/>
+                                    <Setter Property="Cursor" Value="Hand"/>
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ListBoxItem">
+                                                <Border x:Name="bd" Background="Transparent" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                                    <ContentPresenter/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="#F2F2F7"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsSelected" Value="True">
+                                                        <Setter TargetName="bd" Property="Background" Value="#E8F2FE"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                        </ListBox>
                     </Grid>
+                </Border>
 
-                    <Border Grid.Row="1" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrushColor}" BorderThickness="1">
-                        <DataGrid x:Name="GridResults" AutoGenerateColumns="False" IsReadOnly="True">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="Объект учёта" Binding="{Binding NodeTitle}" Width="160"/>
-                                <DataGridTextColumn Header="Точка" Binding="{Binding Title}" Width="120"/>
-                                <DataGridTextColumn Header="Время прибора" Binding="{Binding DeviceTime, StringFormat=\{0:dd.MM.yyyy HH:mm\}}" Width="130"/>
-                                
-                                <DataGridTextColumn Header="T1 (°C)" Binding="{Binding T1, StringFormat=\{0:F2\}}" Width="65"/>
-                                <DataGridTextColumn Header="T2 (°C)" Binding="{Binding T2, StringFormat=\{0:F2\}}" Width="65"/>
-                                <DataGridTextColumn Header="T3 (°C)" Binding="{Binding T3, StringFormat=\{0:F2\}}" Width="65" Visibility="Collapsed"/>
-                                <DataGridTextColumn Header="P1 (атм)" Binding="{Binding P1, StringFormat=\{0:F2\}}" Width="65"/>
-                                <DataGridTextColumn Header="P2 (атм)" Binding="{Binding P2, StringFormat=\{0:F2\}}" Width="65" Visibility="Collapsed"/>
-                                <DataGridTextColumn Header="V1 (м³/ч)" Binding="{Binding V1, StringFormat=\{0:F3\}}" Width="70"/>
-                                <DataGridTextColumn Header="V2 (м³/ч)" Binding="{Binding V2, StringFormat=\{0:F3\}}" Width="70" Visibility="Collapsed"/>
-                                <DataGridTextColumn Header="M1 (т)" Binding="{Binding M1, StringFormat=\{0:F3\}}" Width="70" Visibility="Collapsed"/>
-                                <DataGridTextColumn Header="M2 (т)" Binding="{Binding M2, StringFormat=\{0:F3\}}" Width="70" Visibility="Collapsed"/>
-                                <DataGridTextColumn Header="Q (Гкал)" Binding="{Binding Q, StringFormat=\{0:F3\}}" Width="70" Visibility="Collapsed"/>
-                                
-                                <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="*"/>
-                            </DataGrid.Columns>
-                        </DataGrid>
-                    </Border>
-                </Grid>
+                <!-- Правая карточка: Таблица -->
+                <Border Grid.Column="1" Background="{StaticResource CardBackground}" CornerRadius="14" Margin="8,0,0,0" Padding="14">
+                    <Border.Effect>
+                        <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/>
+                    </Border.Effect>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0" Margin="2,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            
+                            <TextBlock Grid.Column="0" Text="Текущие параметры" FontWeight="SemiBold" FontSize="14" 
+                                       Foreground="{StaticResource LabelPrimary}" VerticalAlignment="Center"/>
+                            
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <TextBlock Text="Скрыть/Показать:" FontSize="12" Foreground="{StaticResource LabelSecondary}" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                                <CheckBox Content="T1" IsChecked="True" Click="ColumnToggle_Click"/>
+                                <CheckBox Content="T2" IsChecked="True" Click="ColumnToggle_Click"/>
+                                <CheckBox Content="T3" IsChecked="False" Click="ColumnToggle_Click"/>
+                                <CheckBox Content="P1" IsChecked="True" Click="ColumnToggle_Click"/>
+                                <CheckBox Content="P2" IsChecked="False" Click="ColumnToggle_Click"/>
+                                <CheckBox Content="V1" IsChecked="True" Click="ColumnToggle_Click"/>
+                                <CheckBox Content="V2" IsChecked="False" Click="ColumnToggle_Click"/>
+                                <CheckBox Content="M1" IsChecked="False" Click="ColumnToggle_Click"/>
+                                <CheckBox Content="M2" IsChecked="False" Click="ColumnToggle_Click"/>
+                                <CheckBox Content="Q"  IsChecked="False" Margin="0" Click="ColumnToggle_Click"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <Border Grid.Row="1" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrushColor}" BorderThickness="1">
+                            <DataGrid x:Name="GridResults" AutoGenerateColumns="False" IsReadOnly="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Объект учёта" Binding="{Binding NodeTitle}" Width="160"/>
+                                    <DataGridTextColumn Header="Точка" Binding="{Binding Title}" Width="120"/>
+                                    <DataGridTextColumn Header="Время прибора" Binding="{Binding DeviceTime, StringFormat=\{0:dd.MM.yyyy HH:mm\}}" Width="130"/>
+                                    
+                                    <!-- Цветовая индикация параметров -->
+                                    <DataGridTextColumn Header="T1 (°C)" Binding="{Binding T1, StringFormat=\{0:F2\}}" Width="65">
+                                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding T1Color}"/></Style></DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                    
+                                    <DataGridTextColumn Header="T2 (°C)" Binding="{Binding T2, StringFormat=\{0:F2\}}" Width="65">
+                                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding T2Color}"/></Style></DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                    
+                                    <DataGridTextColumn Header="T3 (°C)" Binding="{Binding T3, StringFormat=\{0:F2\}}" Width="65" Visibility="Collapsed"/>
+                                    
+                                    <DataGridTextColumn Header="P1 (атм)" Binding="{Binding P1, StringFormat=\{0:F2\}}" Width="65">
+                                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding P1Color}"/></Style></DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                    
+                                    <DataGridTextColumn Header="P2 (атм)" Binding="{Binding P2, StringFormat=\{0:F2\}}" Width="65" Visibility="Collapsed">
+                                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding P2Color}"/></Style></DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                    
+                                    <DataGridTextColumn Header="V1 (м³/ч)" Binding="{Binding V1, StringFormat=\{0:F3\}}" Width="70">
+                                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding V1Color}"/></Style></DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                    
+                                    <DataGridTextColumn Header="V2 (м³/ч)" Binding="{Binding V2, StringFormat=\{0:F3\}}" Width="70" Visibility="Collapsed">
+                                        <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding V2Color}"/></Style></DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                    
+                                    <DataGridTextColumn Header="M1 (т)" Binding="{Binding M1, StringFormat=\{0:F3\}}" Width="70" Visibility="Collapsed"/>
+                                    <DataGridTextColumn Header="M2 (т)" Binding="{Binding M2, StringFormat=\{0:F3\}}" Width="70" Visibility="Collapsed"/>
+                                    <DataGridTextColumn Header="Q (Гкал)" Binding="{Binding Q, StringFormat=\{0:F3\}}" Width="70" Visibility="Collapsed"/>
+                                    
+                                    <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Border>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- Статус бар -->
+            <Border Grid.Row="2" Margin="4,12,4,0">
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse Width="8" Height="8" Fill="{StaticResource AccentGreen}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="TxtStatus" Text="Готово к подключению" FontSize="12" Foreground="{StaticResource LabelSecondary}" VerticalAlignment="Center"/>
+                </StackPanel>
             </Border>
         </Grid>
 
-        <!-- Статус бар -->
-        <Border Grid.Row="2" Margin="4,12,4,0">
-            <StackPanel Orientation="Horizontal">
-                <Ellipse Width="8" Height="8" Fill="{StaticResource AccentGreen}" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                <TextBlock x:Name="TxtStatus" Text="Готово к подключению" FontSize="12" Foreground="{StaticResource LabelSecondary}" VerticalAlignment="Center"/>
-            </StackPanel>
-        </Border>
+        <!-- ОВЕРЛЕЙ: НАСТРОЙКИ ГРАНИЦ -->
+        <Grid x:Name="OverlayLimits" Visibility="Collapsed" Background="#66000000" Panel.ZIndex="100">
+            <Border Background="White" CornerRadius="14" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="24" Width="360">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="30" ShadowDepth="5" Opacity="0.1"/>
+                </Border.Effect>
+                <StackPanel>
+                    <TextBlock x:Name="TxtLimitsTitle" Text="Границы" FontWeight="SemiBold" FontSize="16" Margin="0,0,0,16" Foreground="{StaticResource LabelPrimary}"/>
+                    
+                    <Grid Margin="0,0,0,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="60"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        
+                        <TextBlock Grid.Column="1" Text="Мин." Foreground="{StaticResource LabelSecondary}" Margin="0,0,0,8"/>
+                        <TextBlock Grid.Column="2" Text="Макс." Foreground="{StaticResource LabelSecondary}" Margin="0,0,0,8"/>
+                        
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="T1 (°C)" VerticalAlignment="Center"/>
+                        <TextBox x:Name="TxtT1Min" Grid.Row="1" Grid.Column="1" Margin="0,0,8,8"/>
+                        <TextBox x:Name="TxtT1Max" Grid.Row="1" Grid.Column="2" Margin="0,0,0,8"/>
+                        
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="T2 (°C)" VerticalAlignment="Center"/>
+                        <TextBox x:Name="TxtT2Min" Grid.Row="2" Grid.Column="1" Margin="0,0,8,8"/>
+                        <TextBox x:Name="TxtT2Max" Grid.Row="2" Grid.Column="2" Margin="0,0,0,8"/>
+                        
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="P1 (атм)" VerticalAlignment="Center"/>
+                        <TextBox x:Name="TxtP1Min" Grid.Row="3" Grid.Column="1" Margin="0,0,8,8"/>
+                        <TextBox x:Name="TxtP1Max" Grid.Row="3" Grid.Column="2" Margin="0,0,0,8"/>
+                        
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="P2 (атм)" VerticalAlignment="Center"/>
+                        <TextBox x:Name="TxtP2Min" Grid.Row="4" Grid.Column="1" Margin="0,0,8,8"/>
+                        <TextBox x:Name="TxtP2Max" Grid.Row="4" Grid.Column="2" Margin="0,0,0,8"/>
+
+                        <TextBlock Grid.Row="5" Grid.Column="0" Text="V1 (м³/ч)" VerticalAlignment="Center"/>
+                        <TextBox x:Name="TxtV1Min" Grid.Row="5" Grid.Column="1" Margin="0,0,8,8"/>
+                        <TextBox x:Name="TxtV1Max" Grid.Row="5" Grid.Column="2" Margin="0,0,0,8"/>
+
+                        <TextBlock Grid.Row="6" Grid.Column="0" Text="V2 (м³/ч)" VerticalAlignment="Center"/>
+                        <TextBox x:Name="TxtV2Min" Grid.Row="6" Grid.Column="1" Margin="0,0,8,0"/>
+                        <TextBox x:Name="TxtV2Max" Grid.Row="6" Grid.Column="2" Margin="0,0,0,0"/>
+                    </Grid>
+                    
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Content="Отмена" Click="BtnCancelLimits_Click" Margin="0,0,10,0" Padding="12,8" Background="Transparent" Foreground="{StaticResource LabelSecondary}" BorderThickness="0" Cursor="Hand"/>
+                        <Button Content="Сохранить" Click="BtnSaveLimits_Click" Style="{StaticResource ApplePrimaryButton}"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Window>
