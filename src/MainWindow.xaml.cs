@@ -262,6 +262,23 @@ namespace LersMonitor
                     .ToList();
             }
         }
+        
+        // Метод фильтрации отображения колонок через чекбоксы
+        private void ColumnToggle_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is CheckBox chk && GridResults != null)
+            {
+                string headerPrefix = chk.Content?.ToString() + " ";
+                foreach (var col in GridResults.Columns)
+                {
+                    if (col.Header != null && col.Header.ToString().StartsWith(headerPrefix))
+                    {
+                        col.Visibility = chk.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+                        break;
+                    }
+                }
+            }
+        }
 
         private async void BtnStartMonitor_Click(object sender, RoutedEventArgs e)
         {
@@ -360,23 +377,23 @@ namespace LersMonitor
                                     {
                                         vm.DeviceTime = timeNow;
                                         
-                                        // Парсинг параметров
+                                        // Расширенный сбор всех доступных параметров
                                         vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
                                         vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
+                                        vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
+                                        
                                         vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
-                                        vm.V1 = ExtractParameterValue(root, "v_in", "v1", "m_in", "volume1", "V1", "V_in", "M_in", "mass1", "volume", "M1");
+                                        vm.P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return");
+                                        
+                                        vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
+                                        vm.V2 = ExtractParameterValue(root, "v_out", "v2", "volume2", "V2", "V_out", "volume_return");
+                                        
+                                        vm.M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply");
+                                        vm.M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return");
+                                        
+                                        vm.Q  = ExtractParameterValue(root, "q", "heat", "energy", "Q", "Q_in", "q_total");
 
-                                        // Если все параметры пустые - выводим статус
-                                        if (vm.T1 == null && vm.T2 == null && vm.P1 == null && vm.V1 == null)
-                                        {
-                                            string rawPreview = json.Length > 120 ? json.Substring(0, 120) : json;
-                                            vm.Status = $"JSON: {rawPreview}";
-                                        }
-                                        else
-                                        {
-                                            vm.Status = "Опрошено успешно";
-                                        }
-
+                                        vm.Status = isNew ? "Опрошено успешно" : "Таймаут (старые данные)";
                                         receivedNewData = true;
                                         break;
                                     }
@@ -410,7 +427,6 @@ namespace LersMonitor
 
         private static double? ExtractParameterValue(JsonElement root, params string[] targetNames)
         {
-            // 1. Проверяем прямые свойства в корне JSON объекта
             foreach (var name in targetNames)
             {
                 if (root.TryGetProperty(name, out var prop))
@@ -422,7 +438,6 @@ namespace LersMonitor
                 }
             }
 
-            // 2. Проверяем массив "values" или любые другие массивы во вложенности
             if (root.ValueKind == JsonValueKind.Object)
             {
                 foreach (var prop in root.EnumerateObject())
@@ -433,25 +448,26 @@ namespace LersMonitor
                         {
                             if (item.ValueKind == JsonValueKind.Object)
                             {
-                                // Ищем имя или тип параметра
                                 string typeName = "";
                                 if (item.TryGetProperty("type", out var tProp)) typeName = tProp.GetString() ?? "";
                                 if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("parameterType", out var ptProp)) typeName = ptProp.GetString() ?? "";
                                 if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("name", out var nProp)) typeName = nProp.GetString() ?? "";
                                 if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("title", out var titProp)) typeName = titProp.GetString() ?? "";
-                                if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("dataParameter", out var dpProp)) typeName = dpProp.ToString();
                                 if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("parameter", out var pProp)) typeName = pProp.ToString();
 
                                 bool matchesName = targetNames.Any(tn => typeName.IndexOf(tn, StringComparison.OrdinalIgnoreCase) >= 0);
 
-                                if (matchesName)
+                                if (matchesName || prop.Name.Equals("values", StringComparison.OrdinalIgnoreCase))
                                 {
                                     if (item.TryGetProperty("value", out var valProp) || 
                                         item.TryGetProperty("val", out valProp) || 
                                         item.TryGetProperty("currentValue", out valProp))
                                     {
-                                        if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out double v)) return v;
-                                        if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString(), out double sv)) return sv;
+                                        if (matchesName || targetNames.Length == 0)
+                                        {
+                                            if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out double v)) return v;
+                                            if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString(), out double sv)) return sv;
+                                        }
                                     }
                                 }
                             }
@@ -459,7 +475,6 @@ namespace LersMonitor
                     }
                 }
             }
-
             return null;
         }
 
@@ -503,10 +518,18 @@ namespace LersMonitor
         public string NodeTitle { get; set; } = string.Empty;
         public string Title { get; set; } = string.Empty;
         public DateTime? DeviceTime { get; set; }
+        
         public double? T1 { get; set; }
         public double? T2 { get; set; }
+        public double? T3 { get; set; }
         public double? P1 { get; set; }
+        public double? P2 { get; set; }
         public double? V1 { get; set; }
+        public double? V2 { get; set; }
+        public double? M1 { get; set; }
+        public double? M2 { get; set; }
+        public double? Q { get; set; }
+        
         public string Status { get; set; } = string.Empty;
     }
 }
