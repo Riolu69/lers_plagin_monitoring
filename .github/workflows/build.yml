@@ -1,0 +1,29 @@
+name: Build Lers Monitor
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish Self-Contained EXE
+        run: |
+          dotnet publish src/LersMonitor.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o release
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LersMonitor-Windows-x64
+          path: release/
