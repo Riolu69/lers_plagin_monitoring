@@ -365,7 +365,6 @@ namespace LersMonitor
                                         vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
                                         vm.V1 = ExtractParameterValue(root, "v_in", "v1", "m_in", "volume1", "V1", "V_in", "M1", "mass1", "volume");
 
-                                        // ДИАГНОСТИКА: Если все параметры пустые, покажем первые 120 символов JSON в статусе
                                         if (vm.T1 == null && vm.T2 == null && vm.P1 == null && vm.V1 == null)
                                         {
                                             string rawPreview = json.Length > 120 ? json.Substring(0, 120) : json;
@@ -471,8 +470,7 @@ namespace LersMonitor
 
     public class MeasurePointItem
     {
-        int Id { get; set; }
-        public int Id { get => field; set => field = value; }
+        public int Id { get; set; }
         public string Title { get; set; } = string.Empty;
         public string NodeTitle { get; set; } = string.Empty;
         public string DisplayName => $"{NodeTitle} — {Title}";
@@ -497,6 +495,7 @@ namespace LersMonitor
         public double? T1 { get; set; }
         public double? T2 { get; set; }
         public double? P1 { get; set; }
-        // ... (остальной код модели без изменений)
+        public double? V1 { get; set; }
+        public string Status { get; set; } = string.Empty;
     }
 }
