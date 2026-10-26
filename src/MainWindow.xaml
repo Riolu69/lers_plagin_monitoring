@@ -1,0 +1,62 @@
+<Window x:Class="LersMonitor.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ЛЭРС УЧЁТ — Мониторинг текущих" Height="650" Width="1000">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Верхняя панель подключения -->
+        <Border Grid.Row="0" Background="#F6F8FA" CornerRadius="6" Padding="10" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Сервер:" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                <TextBox x:Name="TxtHost" Width="140" Text="localhost" Margin="0,0,10,0" VerticalContentAlignment="Center"/>
+                
+                <TextBlock Text="Логин:" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                <TextBox x:Name="TxtLogin" Width="100" Text="admin" Margin="0,0,10,0" VerticalContentAlignment="Center"/>
+                
+                <TextBlock Text="Пароль:" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                <PasswordBox x:Name="TxtPassword" Width="100" Margin="0,0,15,0" VerticalContentAlignment="Center"/>
+                
+                <Button x:Name="BtnConnect" Content="1. Подключиться" Padding="12,5" Margin="0,0,10,0" Click="BtnConnect_Click"/>
+                <Button x:Name="BtnStartMonitor" Content="2. Запустить мониторинг" Background="#2EA043" Foreground="White" FontWeight="SemiBold" Padding="12,5" Click="BtnStartMonitor_Click" IsEnabled="False"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Основная область -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="320"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Левая колонка: выбор точек -->
+            <GroupBox Header="Точки учёта" Grid.Column="0" Margin="0,0,6,0">
+                <ListBox x:Name="ListPoints" SelectionMode="Multiple" DisplayMemberPath="Title"/>
+            </GroupBox>
+
+            <!-- Правая колонка: таблица параметров -->
+            <GroupBox Header="Текущие параметры" Grid.Column="1" Margin="6,0,0,0">
+                <DataGrid x:Name="GridResults" AutoGenerateColumns="False" IsReadOnly="True" GridLinesVisibility="Horizontal">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Точка учёта" Binding="{Binding Title}" Width="180"/>
+                        <DataGridTextColumn Header="Время прибора" Binding="{Binding DeviceTime, StringFormat=\{0:dd.MM.yyyy HH:mm\}}" Width="120"/>
+                        <DataGridTextColumn Header="T1 (°C)" Binding="{Binding T1, StringFormat=\{0:F2\}}" Width="70"/>
+                        <DataGridTextColumn Header="T2 (°C)" Binding="{Binding T2, StringFormat=\{0:F2\}}" Width="70"/>
+                        <DataGridTextColumn Header="P1 (атм)" Binding="{Binding P1, StringFormat=\{0:F2\}}" Width="70"/>
+                        <DataGridTextColumn Header="V1 (м³/ч)" Binding="{Binding V1, StringFormat=\{0:F3\}}" Width="80"/>
+                        <DataGridTextColumn Header="Статус опроса" Binding="{Binding Status}" Width="*"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </GroupBox>
+        </Grid>
+
+        <!-- Статус бар -->
+        <StatusBar Grid.Row="2" Margin="0,8,0,0">
+            <TextBlock x:Name="TxtStatus" Text="Готов к подключению" />
+        </StatusBar>
+    </Grid>
+</Window>
