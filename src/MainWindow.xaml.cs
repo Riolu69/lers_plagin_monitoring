@@ -29,21 +29,46 @@ namespace LersMonitor
             try
             {
                 TxtStatus.Text = "Подключение к серверу...";
-                _server = new LersServer();
+                BtnConnect.IsEnabled = false;
 
-                var auth = new BasicAuthenticationInfo(TxtLogin.Text, TxtPassword.Password);
-                await Task.Run(() => _server.Connect(TxtHost.Text, 10000, auth));
+                // 1. Считываем значения из UI-полей в главном потоке!
+                string host = TxtHost.Text.Trim();
+                string login = TxtLogin.Text.Trim();
+                string password = TxtPassword.Password;
 
-                var points = await Task.Run(() => _server.MeasurePoints.GetList());
-                ListPoints.ItemsSource = points.ToList();
+                // Разбираем порт, если ввели в формате host:port
+                int port = 10000;
+                if (host.Contains(':'))
+                {
+                    var parts = host.Split(':');
+                    host = parts[0];
+                    int.TryParse(parts[1], out port);
+                }
 
+                // 2. Создаем и подключаем сервер целиком в фоновом потоке,
+                // не трогая элементы интерфейса внутри Task.Run
+                var pointsList = await Task.Run(() =>
+                {
+                    _server = new LersServer();
+                    var auth = new BasicAuthenticationInfo(login, password);
+                    _server.Connect(host, port, auth);
+
+                    return _server.MeasurePoints.GetList().ToList();
+                });
+
+                // 3. Возвращаемся в UI-поток и обновляем список на экране
+                ListPoints.ItemsSource = pointsList;
                 BtnStartMonitor.IsEnabled = true;
-                TxtStatus.Text = $"Подключено. Загружено точек: {points.Count()}";
+                TxtStatus.Text = $"Подключено. Загружено точек: {pointsList.Count}";
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Ошибка подключения: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
                 TxtStatus.Text = "Ошибка подключения";
+            }
+            finally
+            {
+                BtnConnect.IsEnabled = true;
             }
         }
 
@@ -69,17 +94,21 @@ namespace LersMonitor
 
             try
             {
+                BtnStartMonitor.IsEnabled = false;
                 TxtStatus.Text = "Запуск опроса и чтение данных...";
+
+                // Копируем список моделей, чтобы безопасно менять их свойства в фоновом потоке
+                var itemsToProcess = _results.ToList();
 
                 await Task.Run(async () =>
                 {
-                    // 1. Попытка запуска ручного опроса через доступный метод в PollManager или самой точке
+                    // 1. Попытка запуска ручного опроса
                     TryStartPoll(_server!, selectedPoints);
 
                     await Task.Delay(5000);
 
                     // 2. Считывание текущих параметров по точкам
-                    foreach (var item in _results)
+                    foreach (var item in itemsToProcess)
                     {
                         var point = selectedPoints.FirstOrDefault(p => p.Id == item.Id);
                         if (point == null) continue;
@@ -96,6 +125,10 @@ namespace LersMonitor
                 MessageBox.Show($"Ошибка во время опроса: {ex.Message}");
                 TxtStatus.Text = "Сбой операции";
             }
+            finally
+            {
+                BtnStartMonitor.IsEnabled = true;
+            }
         }
 
         private void TryStartPoll(LersServer server, System.Collections.Generic.List<MeasurePoint> points)
@@ -105,7 +138,6 @@ namespace LersMonitor
                 var pollMgr = server.Poll;
                 var pollType = pollMgr.GetType();
 
-                // Ищем метод запуска опроса в PollManager
                 var method = pollType.GetMethods()
                     .FirstOrDefault(m => m.Name.Contains("Poll") || m.Name.Contains("Start"));
 
@@ -120,7 +152,6 @@ namespace LersMonitor
             }
             catch
             {
-                // Если ручной опрос недоступен для учетной записи, переходим сразу к чтению данных
             }
         }
 
@@ -128,7 +159,6 @@ namespace LersMonitor
         {
             try
             {
-                // Обновляем сведения о точке с сервера
                 var refreshMethod = point.GetType().GetMethod("Refresh", Type.EmptyTypes);
                 refreshMethod?.Invoke(point, null);
 
@@ -141,7 +171,6 @@ namespace LersMonitor
 
                 var dataType = dataObj.GetType();
 
-                // Ищем метод получения текущих/архивных данных (GetCurrent, GetConsumption, GetTotals и т.д.)
                 var getMethod = dataType.GetMethods()
                     .FirstOrDefault(m => m.Name.Contains("Current") && m.GetParameters().Length == 0);
 
@@ -159,7 +188,6 @@ namespace LersMonitor
                 }
                 else
                 {
-                    // Если нет метода без параметров, ищем свойство с данными
                     var prop = dataType.GetProperties()
                         .FirstOrDefault(p => p.Name.Contains("Current"));
                     record = prop?.GetValue(dataObj);
@@ -181,7 +209,6 @@ namespace LersMonitor
                 }
                 else
                 {
-                    // Выводим в статус список доступных методов point.Data для наглядности
                     var availableMethods = string.Join(", ", dataType.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly).Select(m => m.Name).Distinct());
                     vm.Status = $"Методы Data: {availableMethods}";
                 }
