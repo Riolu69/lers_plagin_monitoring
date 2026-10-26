@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -12,6 +13,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 
 namespace LersMonitor
 {
@@ -26,6 +28,8 @@ namespace LersMonitor
         private List<MeasurePointItem> _allPoints = new();
         private readonly ObservableCollection<PointResultViewModel> _results = new();
         private UserSettings _settings = new();
+        
+        private MeasurePointItem? _editingPoint = null;
 
         private static string SettingsFilePath =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LersMonitor", "settings.json");
@@ -58,6 +62,9 @@ namespace LersMonitor
                             var bytes = Convert.FromBase64String(_settings.PasswordBase64);
                             TxtPassword.Password = Encoding.UTF8.GetString(bytes);
                         }
+                        
+                        if (_settings.PointLimits == null) 
+                            _settings.PointLimits = new Dictionary<int, PointThresholds>();
                     }
                 }
             }
@@ -281,6 +288,97 @@ namespace LersMonitor
             }
         }
 
+        // --- ЛОГИКА НАСТРОЕК ДОПУСКОВ ---
+
+        private void BtnSettings_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
+            if (selected.Count != 1)
+            {
+                MessageBox.Show("Выберите ровно ОДНУ точку в списке слева для настройки её границ.", "Внимание", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            _editingPoint = selected.First();
+            TxtLimitsTitle.Text = $"Границы: {_editingPoint.Title}";
+
+            if (_settings.PointLimits.TryGetValue(_editingPoint.Id, out var limits))
+            {
+                TxtT1Min.Text = limits.T1Min?.ToString();
+                TxtT1Max.Text = limits.T1Max?.ToString();
+                TxtT2Min.Text = limits.T2Min?.ToString();
+                TxtT2Max.Text = limits.T2Max?.ToString();
+                TxtP1Min.Text = limits.P1Min?.ToString();
+                TxtP1Max.Text = limits.P1Max?.ToString();
+                TxtP2Min.Text = limits.P2Min?.ToString();
+                TxtP2Max.Text = limits.P2Max?.ToString();
+                TxtV1Min.Text = limits.V1Min?.ToString();
+                TxtV1Max.Text = limits.V1Max?.ToString();
+                TxtV2Min.Text = limits.V2Min?.ToString();
+                TxtV2Max.Text = limits.V2Max?.ToString();
+            }
+            else
+            {
+                TxtT1Min.Text = ""; TxtT1Max.Text = "";
+                TxtT2Min.Text = ""; TxtT2Max.Text = "";
+                TxtP1Min.Text = ""; TxtP1Max.Text = "";
+                TxtP2Min.Text = ""; TxtP2Max.Text = "";
+                TxtV1Min.Text = ""; TxtV1Max.Text = "";
+                TxtV2Min.Text = ""; TxtV2Max.Text = "";
+            }
+
+            OverlayLimits.Visibility = Visibility.Visible;
+        }
+
+        private void BtnCancelLimits_Click(object sender, RoutedEventArgs e)
+        {
+            OverlayLimits.Visibility = Visibility.Collapsed;
+            _editingPoint = null;
+        }
+
+        private void BtnSaveLimits_Click(object sender, RoutedEventArgs e)
+        {
+            if (_editingPoint == null) return;
+
+            var limits = new PointThresholds();
+            limits.T1Min = ParseDouble(TxtT1Min.Text);
+            limits.T1Max = ParseDouble(TxtT1Max.Text);
+            limits.T2Min = ParseDouble(TxtT2Min.Text);
+            limits.T2Max = ParseDouble(TxtT2Max.Text);
+            limits.P1Min = ParseDouble(TxtP1Min.Text);
+            limits.P1Max = ParseDouble(TxtP1Max.Text);
+            limits.P2Min = ParseDouble(TxtP2Min.Text);
+            limits.P2Max = ParseDouble(TxtP2Max.Text);
+            limits.V1Min = ParseDouble(TxtV1Min.Text);
+            limits.V1Max = ParseDouble(TxtV1Max.Text);
+            limits.V2Min = ParseDouble(TxtV2Min.Text);
+            limits.V2Max = ParseDouble(TxtV2Max.Text);
+
+            _settings.PointLimits[_editingPoint.Id] = limits;
+            SaveUserSettings();
+
+            // Если точка сейчас находится в таблице мониторинга — моментально обновляем цвета
+            var vm = _results.FirstOrDefault(r => r.Id == _editingPoint.Id);
+            if (vm != null)
+            {
+                vm.Limits = limits;
+                vm.RefreshColors();
+            }
+
+            OverlayLimits.Visibility = Visibility.Collapsed;
+            _editingPoint = null;
+        }
+
+        private double? ParseDouble(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            if (double.TryParse(text.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out double res))
+                return res;
+            return null;
+        }
+
+        // --- ЛОГИКА ОПРОСА ---
+
         private static string ParseLersError(string jsonResponse, int statusCode)
         {
             try
@@ -309,12 +407,14 @@ namespace LersMonitor
             _results.Clear();
             foreach (var p in selectedPoints)
             {
+                _settings.PointLimits.TryGetValue(p.Id, out var pointLimits);
                 _results.Add(new PointResultViewModel
                 {
                     Id = p.Id,
                     Title = p.Title,
                     NodeTitle = p.NodeTitle,
-                    Status = "Подготовка..."
+                    Status = "Подготовка...",
+                    Limits = pointLimits
                 });
             }
 
@@ -384,7 +484,6 @@ namespace LersMonitor
 
                     for (int attempt = 1; attempt <= maxChecks; attempt++)
                     {
-                        // Если 422 - это скорее всего опрос соседней точки этого же модема. Просто пишем "Опрос прибора".
                         vm.Status = $"Опрос прибора ({attempt}/{maxChecks})...";
 
                         await Task.Delay(checkIntervalMs);
@@ -405,7 +504,6 @@ namespace LersMonitor
 
                                     if (isNew || attempt == maxChecks)
                                     {
-                                        // Обновляем ячейки. Благодаря INotifyPropertyChanged интерфейс обновится мгновенно и без зависаний
                                         vm.DeviceTime = timeNow;
                                         
                                         vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
@@ -533,6 +631,22 @@ namespace LersMonitor
         public string DisplayName => $"{NodeTitle} — {Title}";
     }
 
+    public class PointThresholds
+    {
+        public double? T1Min { get; set; }
+        public double? T1Max { get; set; }
+        public double? T2Min { get; set; }
+        public double? T2Max { get; set; }
+        public double? P1Min { get; set; }
+        public double? P1Max { get; set; }
+        public double? P2Min { get; set; }
+        public double? P2Max { get; set; }
+        public double? V1Min { get; set; }
+        public double? V1Max { get; set; }
+        public double? V2Min { get; set; }
+        public double? V2Max { get; set; }
+    }
+
     public class UserSettings
     {
         public string Host { get; set; } = "localhost";
@@ -541,15 +655,35 @@ namespace LersMonitor
         public string PasswordBase64 { get; set; } = "";
         public bool RememberCredentials { get; set; } = true;
         public List<int> SelectedPointIds { get; set; } = new();
+        public Dictionary<int, PointThresholds> PointLimits { get; set; } = new();
     }
 
-    // РЕШЕНИЕ ЗАВИСАНИЙ: Класс теперь умеет уведомлять WPF об изменениях точечно
     public class PointResultViewModel : INotifyPropertyChanged
     {
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string? name = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+
+        public PointThresholds? Limits { get; set; }
+
+        public void RefreshColors()
+        {
+            OnPropertyChanged(nameof(T1Color));
+            OnPropertyChanged(nameof(T2Color));
+            OnPropertyChanged(nameof(P1Color));
+            OnPropertyChanged(nameof(P2Color));
+            OnPropertyChanged(nameof(V1Color));
+            OnPropertyChanged(nameof(V2Color));
+        }
+
+        private Brush GetColor(double? val, double? min, double? max)
+        {
+            if (val == null) return new SolidColorBrush(Color.FromRgb(29, 29, 31)); // LabelPrimary
+            if (min.HasValue && val.Value < min.Value) return Brushes.Red;
+            if (max.HasValue && val.Value > max.Value) return Brushes.Red;
+            return new SolidColorBrush(Color.FromRgb(29, 29, 31));
         }
 
         private int _id;
@@ -565,25 +699,31 @@ namespace LersMonitor
         public DateTime? DeviceTime { get => _deviceTime; set { _deviceTime = value; OnPropertyChanged(); } }
         
         private double? _t1;
-        public double? T1 { get => _t1; set { _t1 = value; OnPropertyChanged(); } }
+        public double? T1 { get => _t1; set { _t1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T1Color)); } }
+        public Brush T1Color => GetColor(T1, Limits?.T1Min, Limits?.T1Max);
         
         private double? _t2;
-        public double? T2 { get => _t2; set { _t2 = value; OnPropertyChanged(); } }
+        public double? T2 { get => _t2; set { _t2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T2Color)); } }
+        public Brush T2Color => GetColor(T2, Limits?.T2Min, Limits?.T2Max);
         
         private double? _t3;
         public double? T3 { get => _t3; set { _t3 = value; OnPropertyChanged(); } }
         
         private double? _p1;
-        public double? P1 { get => _p1; set { _p1 = value; OnPropertyChanged(); } }
+        public double? P1 { get => _p1; set { _p1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(P1Color)); } }
+        public Brush P1Color => GetColor(P1, Limits?.P1Min, Limits?.P1Max);
         
         private double? _p2;
-        public double? P2 { get => _p2; set { _p2 = value; OnPropertyChanged(); } }
+        public double? P2 { get => _p2; set { _p2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(P2Color)); } }
+        public Brush P2Color => GetColor(P2, Limits?.P2Min, Limits?.P2Max);
         
         private double? _v1;
-        public double? V1 { get => _v1; set { _v1 = value; OnPropertyChanged(); } }
+        public double? V1 { get => _v1; set { _v1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(V1Color)); } }
+        public Brush V1Color => GetColor(V1, Limits?.V1Min, Limits?.V1Max);
         
         private double? _v2;
-        public double? V2 { get => _v2; set { _v2 = value; OnPropertyChanged(); } }
+        public double? V2 { get => _v2; set { _v2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(V2Color)); } }
+        public Brush V2Color => GetColor(V2, Limits?.V2Min, Limits?.V2Max);
         
         private double? _m1;
         public double? M1 { get => _m1; set { _m1 = value; OnPropertyChanged(); } }
