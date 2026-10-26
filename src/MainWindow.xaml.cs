@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using System.Windows;
 using Lers;
 using Lers.Core;
-using Lers.Data;
 using Lers.Networking;
 using Lers.Poll;
 
@@ -32,13 +31,16 @@ namespace LersMonitor
                 _server = new LersServer();
                 
                 var auth = new BasicAuthenticationInfo(TxtLogin.Text, TxtPassword.Password);
-                await _server.ConnectAsync(TxtHost.Text, 10000, auth);
+                
+                // Подключение к серверу ЛЭРС
+                await Task.Run(() => _server.Connect(TxtHost.Text, 10000, auth));
 
-                var points = await _server.MeasurePoints.GetListAsync();
-                ListPoints.ItemsSource = points;
+                // Получение списка точек учета
+                var points = await Task.Run(() => _server.MeasurePoints.GetList());
+                ListPoints.ItemsSource = points.ToList();
 
                 BtnStartMonitor.IsEnabled = true;
-                TxtStatus.Text = $"Подключено. Загружено точек учёта: {points.Count}";
+                TxtStatus.Text = $"Подключено. Загружено точек: {points.Count()}";
             }
             catch (Exception ex)
             {
@@ -71,29 +73,27 @@ namespace LersMonitor
             {
                 TxtStatus.Text = "Запуск ручного опроса...";
 
-                // Параметры для опроса только текущих значений
-                var pollParams = new ManualPollParameters
+                // Формируем параметры опроса текущих данных
+                var options = new ManualPollOptions
                 {
-                    DataTypes = PollDataType.Current
+                    Data = ManualPollData.Current
                 };
 
-                // Добавляем выбранные точки учета в сеанс
                 foreach (var point in selectedPoints)
                 {
-                    pollParams.AddMeasurePoint(point);
+                    options.MeasurePoints.Add(point);
                 }
 
-                var session = await _server!.Poll.StartManualPollAsync(pollParams);
+                // Запуск опроса
+                var session = await Task.Run(() => _server!.Poll.StartManualPoll(options));
 
                 // Ожидание завершения опроса
                 while (true)
                 {
-                    await session.RefreshAsync();
-                    TxtStatus.Text = $"Опрос: {session.State}";
+                    await Task.Run(() => session.Refresh());
+                    TxtStatus.Text = $"Опрос... Статус: {session.Status}";
 
-                    if (session.State == PollSessionState.Completed || 
-                        session.State == PollSessionState.Terminated || 
-                        session.State == PollSessionState.Error)
+                    if (session.IsFinished)
                     {
                         break;
                     }
@@ -103,28 +103,37 @@ namespace LersMonitor
 
                 TxtStatus.Text = "Считывание текущих значений...";
                 
-                // Считываем обновленные текущие данные
-                foreach (var item in _results)
+                // Считываем обновленные текущие данные по точкам
+                await Task.Run(() =>
                 {
-                    var point = selectedPoints.FirstOrDefault(p => p.Id == item.Id);
-                    if (point == null) continue;
+                    foreach (var item in _results)
+                    {
+                        var point = selectedPoints.FirstOrDefault(p => p.Id == item.Id);
+                        if (point == null) continue;
 
-                    // Запрашиваем последние сохраненные текущие данные
-                    var current = await point.Data.GetCurrentAsync();
-                    if (current != null)
-                    {
-                        item.DeviceTime = current.DeviceTime;
-                        item.T1 = current.T_in;
-                        item.T2 = current.T_out;
-                        item.P1 = current.P_in;
-                        item.V1 = current.V_in;
-                        item.Status = "Опрошено успешно";
+                        try
+                        {
+                            var current = point.Data.GetCurrentData();
+                            if (current != null)
+                            {
+                                item.DeviceTime = current.DeviceTime;
+                                item.T1 = current.T_in;
+                                item.T2 = current.T_out;
+                                item.P1 = current.P_in;
+                                item.V1 = current.V_in;
+                                item.Status = "Опрошено успешно";
+                            }
+                            else
+                            {
+                                item.Status = "Нет данных";
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            item.Status = $"Ошибка: {ex.Message}";
+                        }
                     }
-                    else
-                    {
-                        item.Status = "Нет данных";
-                    }
-                }
+                });
 
                 GridResults.Items.Refresh();
                 TxtStatus.Text = "Мониторинг завершен.";
