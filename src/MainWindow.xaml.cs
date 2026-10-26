@@ -1,12 +1,13 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
-using System.Reflection;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Windows;
 
@@ -16,7 +17,10 @@ namespace LersMonitor
 
     public partial class MainWindow : Window
     {
-        private object? _server;
+        private readonly HttpClient _http = new();
+        private string? _token;
+        private string _baseUrl = "";
+
         private readonly ObservableCollection<PointResultViewModel> _results = new();
         private UserSettings _settings = new();
 
@@ -54,9 +58,7 @@ namespace LersMonitor
                     }
                 }
             }
-            catch
-            {
-            }
+            catch { }
         }
 
         private void SaveUserSettings(List<int>? selectedPointIds = null)
@@ -65,9 +67,7 @@ namespace LersMonitor
             {
                 var dir = Path.GetDirectoryName(SettingsFilePath);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                {
                     Directory.CreateDirectory(dir);
-                }
 
                 bool remember = ChkRemember.IsChecked == true;
                 _settings.RememberCredentials = remember;
@@ -89,16 +89,12 @@ namespace LersMonitor
                 }
 
                 if (selectedPointIds != null)
-                {
                     _settings.SelectedPointIds = selectedPointIds;
-                }
 
                 var json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(SettingsFilePath, json);
             }
-            catch
-            {
-            }
+            catch { }
         }
 
         private async void BtnConnect_Click(object sender, RoutedEventArgs e)
@@ -113,89 +109,91 @@ namespace LersMonitor
                 string login = TxtLogin.Text.Trim();
                 string password = TxtPassword.Password;
 
-                if (string.IsNullOrWhiteSpace(host))
+                if (string.IsNullOrWhiteSpace(host) || !ushort.TryParse(portStr, out ushort port))
                 {
-                    MessageBox.Show("Укажите IP-адрес или домен сервера.", "Внимание", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    MessageBox.Show("Укажите корректный IP/хост и порт.", "Внимание", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
 
-                if (!ushort.TryParse(portStr, out ushort port) || port == 0)
+                // Префикс API из OpenLuch: /api/v1
+                _baseUrl = $"http://{host}:{port}/api/v1";
+
+                // 1. Вход: POST /api/v1/Login с application name
+                var loginPayload = JsonSerializer.Serialize(new 
+                { 
+                    login = login, 
+                    password = password,
+                    application = "LersMonitor WPF"
+                });
+
+                var loginContent = new StringContent(loginPayload, Encoding.UTF8, "application/json");
+                _http.DefaultRequestHeaders.Accept.Clear();
+                _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+                var response = await _http.PostAsync($"{_baseUrl}/Login", loginContent);
+                var loginResponseJson = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
                 {
-                    MessageBox.Show("Укажите корректный порт (число от 1 до 65535). По умолчанию: 10000", "Внимание", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
+                    throw new Exception($"Код {(int)response.StatusCode}: {loginResponseJson}");
                 }
 
-                // Инициализация LersServer через рефлексию для совместимости с любой версией сборки
-                var lersServerType = AppDomain.CurrentDomain.GetAssemblies()
-                    .SelectMany(a => { try { return a.GetTypes(); } catch { return Array.Empty<Type>(); } })
-                    .FirstOrDefault(t => t.Name == "LersServer");
+                using var doc = JsonDocument.Parse(loginResponseJson);
+                if (doc.RootElement.TryGetProperty("token", out var tokenProp))
+                    _token = tokenProp.GetString();
+                else
+                    _token = loginResponseJson.Trim('"');
 
-                if (lersServerType == null)
-                {
-                    throw new Exception("Библиотека Lers.Framework не найдена. Проверьте установку пакетов.");
-                }
+                if (string.IsNullOrEmpty(_token))
+                    throw new Exception("Сервер не вернул токен авторизации.");
 
-                _server = Activator.CreateInstance(lersServerType);
-
-                // Создание учетных данных
-                var authType = AppDomain.CurrentDomain.GetAssemblies()
-                    .SelectMany(a => { try { return a.GetTypes(); } catch { return Array.Empty<Type>(); } })
-                    .FirstOrDefault(t => t.Name == "BasicAuthenticationInfo");
-
-                object? auth = null;
-                if (authType != null)
-                {
-                    auth = Activator.CreateInstance(authType, login, password);
-                }
-
-                // Вызов метода Connect / ConnectAsync
-                var connectMethod = lersServerType.GetMethods()
-                    .FirstOrDefault(m => m.Name.StartsWith("Connect") && m.GetParameters().Length >= 3);
-
-                if (connectMethod == null)
-                {
-                    throw new Exception("Не найден подходящий метод Connect у LersServer.");
-                }
-
-                var connectResult = connectMethod.Invoke(_server, new object[] { host, port, auth! });
-                if (connectResult is Task task)
-                {
-                    await task;
-                }
+                _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _token);
 
                 SaveUserSettings();
 
+                // 2. Запрос списка точек учёта: GET /api/v1/Core/MeasurePoints?type=Regular&getCustomers=true
                 TxtStatus.Text = "Загрузка точек учёта...";
+                var pointsRes = await _http.GetAsync($"{_baseUrl}/Core/MeasurePoints?type=Regular&getCustomers=true");
+                pointsRes.EnsureSuccessStatusCode();
 
-                // Получение точек учёта
-                var measurePointsProp = lersServerType.GetProperty("MeasurePoints");
-                var pointsMgr = measurePointsProp?.GetValue(_server);
-
-                var getListMethod = pointsMgr?.GetType().GetMethods()
-                    .FirstOrDefault(m => (m.Name == "GetList" || m.Name == "GetListAsync") && m.GetParameters().Length == 0);
-
-                object? rawPoints = getListMethod?.Invoke(pointsMgr, null);
-                if (rawPoints is Task t)
+                var pointsJson = await pointsRes.Content.ReadAsStringAsync();
+                
+                // В OpenLuch ответ приходит в обертке: { "measurePoints": [...] }
+                var pointsList = new List<MeasurePointItem>();
+                using var pDoc = JsonDocument.Parse(pointsJson);
+                
+                JsonElement arrayElement;
+                if (pDoc.RootElement.ValueKind == JsonValueKind.Array)
                 {
-                    await t;
-                    var resProp = t.GetType().GetProperty("Result");
-                    rawPoints = resProp?.GetValue(t);
+                    arrayElement = pDoc.RootElement;
+                }
+                else if (pDoc.RootElement.TryGetProperty("measurePoints", out var mProp))
+                {
+                    arrayElement = mProp;
+                }
+                else
+                {
+                    arrayElement = pDoc.RootElement;
                 }
 
-                var pointsList = ((IEnumerable)rawPoints!).Cast<object>().ToList();
+                foreach (var item in arrayElement.EnumerateArray())
+                {
+                    int id = item.TryGetProperty("id", out var idElem) ? idElem.GetInt32() : 0;
+                    string title = item.TryGetProperty("title", out var titleElem) ? titleElem.GetString() ?? "" : $"Точка #{id}";
+                    if (id > 0)
+                    {
+                        pointsList.Add(new MeasurePointItem { Id = id, Title = title });
+                    }
+                }
 
                 ListPoints.ItemsSource = pointsList;
 
                 // Восстановление выбранных точек
                 if (_settings.SelectedPointIds != null && _settings.SelectedPointIds.Any())
                 {
-                    foreach (var p in pointsList)
+                    foreach (var p in pointsList.Where(p => _settings.SelectedPointIds.Contains(p.Id)))
                     {
-                        var idProp = p.GetType().GetProperty("Id");
-                        if (idProp != null && _settings.SelectedPointIds.Contains((int)idProp.GetValue(p)!))
-                        {
-                            ListPoints.SelectedItems.Add(p);
-                        }
+                        ListPoints.SelectedItems.Add(p);
                     }
                 }
 
@@ -204,14 +202,8 @@ namespace LersMonitor
             }
             catch (Exception ex)
             {
-                string details = ex.InnerException != null 
-                    ? $"{ex.Message}\n\nПодробности: {ex.InnerException.Message}" 
-                    : ex.Message;
-
-                MessageBox.Show($"Ошибка подключения:\n\n{details}", 
-                    "Ошибка подключения", MessageBoxButton.OK, MessageBoxImage.Error);
-                
-                TxtStatus.Text = $"Ошибка: {ex.Message}";
+                MessageBox.Show($"Ошибка подключения по REST API:\n\n{ex.Message}", "Ошибка подключения", MessageBoxButton.OK, MessageBoxImage.Error);
+                TxtStatus.Text = "Ошибка подключения";
             }
             finally
             {
@@ -221,53 +213,89 @@ namespace LersMonitor
 
         private async void BtnStartMonitor_Click(object sender, RoutedEventArgs e)
         {
-            var selectedPoints = ListPoints.SelectedItems.Cast<object>().ToList();
+            var selectedPoints = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
             if (!selectedPoints.Any())
             {
-                MessageBox.Show("Выберите хотя бы одну точку учёта в списке слева.");
+                MessageBox.Show("Выберите точки учёта в списке слева.");
                 return;
             }
 
-            var ids = new List<int>();
+            SaveUserSettings(selectedPoints.Select(p => p.Id).ToList());
+
             _results.Clear();
-
-            foreach (var point in selectedPoints)
+            foreach (var p in selectedPoints)
             {
-                var id = (int)point.GetType().GetProperty("Id")!.GetValue(point)!;
-                var title = (string)point.GetType().GetProperty("Title")!.GetValue(point)!;
-                ids.Add(id);
-
                 _results.Add(new PointResultViewModel
                 {
-                    Id = id,
-                    Title = title,
-                    Status = "В очереди..."
+                    Id = p.Id,
+                    Title = p.Title,
+                    Status = "Ожидание..."
                 });
             }
-
-            SaveUserSettings(ids);
 
             try
             {
                 BtnStartMonitor.IsEnabled = false;
-                TxtStatus.Text = "Запуск опроса и считывание текущих...";
 
-                var itemsToProcess = _results.ToList();
-
-                await Task.Run(async () =>
+                // 1. Запуск разового опроса для каждой точки по схеме OpenLuch:
+                // POST /api/v1/Poll/MeasurePoints/{id}/Currents?once=true с Content-Length: 0
+                foreach (var item in _results)
                 {
-                    TryStartPoll(_server!, selectedPoints);
-
-                    await Task.Delay(4000);
-
-                    foreach (var item in itemsToProcess)
+                    try
                     {
-                        var point = selectedPoints.FirstOrDefault(p => (int)p.GetType().GetProperty("Id")!.GetValue(p)! == item.Id);
-                        if (point == null) continue;
+                        TxtStatus.Text = $"Запуск опроса прибора для: {item.Title}...";
+                        
+                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{item.Id}/Currents?once=true");
+                        pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
+                        pollReq.Content.Headers.ContentLength = 0;
 
-                        ReadPointCurrentData(point, item);
+                        await _http.SendAsync(pollReq);
                     }
-                });
+                    catch
+                    {
+                        // Если на сервере опрос не настроен, продолжаем считывание последнего значения
+                    }
+                }
+
+                TxtStatus.Text = "Ожидание ответа приборов (5 сек)...";
+                await Task.Delay(5000);
+
+                // 2. Чтение последних данных по схеме OpenLuch:
+                // GET /api/v1/Data/MeasurePoints/{id}/Consumption/Last
+                foreach (var item in _results)
+                {
+                    try
+                    {
+                        var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{item.Id}/Consumption/Last");
+                        if (res.IsSuccessStatusCode)
+                        {
+                            var json = await res.Content.ReadAsStringAsync();
+                            if (string.IsNullOrWhiteSpace(json) || json.Trim() == "null")
+                            {
+                                item.Status = "Нет данных на сервере";
+                                continue;
+                            }
+
+                            using var doc = JsonDocument.Parse(json);
+                            var root = doc.RootElement;
+
+                            item.DeviceTime = TryGetDate(root, "dateTime", "deviceTime");
+                            item.T1 = TryGetDouble(root, "t_in", "t1");
+                            item.T2 = TryGetDouble(root, "t_out", "t2");
+                            item.P1 = TryGetDouble(root, "p_in", "p1");
+                            item.V1 = TryGetDouble(root, "v_in", "v1", "m_in");
+                            item.Status = "Опрошено";
+                        }
+                        else
+                        {
+                            item.Status = $"Код {res.StatusCode}";
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        item.Status = $"Ошибка: {ex.Message}";
+                    }
+                }
 
                 GridResults.Items.Refresh();
                 TxtStatus.Text = "Мониторинг завершен.";
@@ -283,122 +311,41 @@ namespace LersMonitor
             }
         }
 
-        private void TryStartPoll(object server, List<object> points)
+        private static double? TryGetDouble(JsonElement elem, params string[] names)
         {
-            try
+            foreach (var n in names)
             {
-                var pollProp = server.GetType().GetProperty("Poll");
-                var pollMgr = pollProp?.GetValue(server);
-                if (pollMgr == null) return;
-
-                var pollType = pollMgr.GetType();
-                var method = pollType.GetMethods()
-                    .FirstOrDefault(m => m.Name.Contains("Poll") || m.Name.Contains("Start"));
-
-                if (method != null)
+                if (elem.TryGetProperty(n, out var prop))
                 {
-                    var pars = method.GetParameters();
-                    if (pars.Length == 1)
-                    {
-                        var elemType = pars[0].ParameterType.GetElementType() ?? typeof(object);
-                        var arr = Array.CreateInstance(elemType, points.Count);
-                        for (int i = 0; i < points.Count; i++) arr.SetValue(points[i], i);
-                        method.Invoke(pollMgr, new object[] { arr });
-                    }
+                    if (prop.ValueKind == JsonValueKind.Number && prop.TryGetDouble(out double val))
+                        return val;
+                    if (prop.ValueKind == JsonValueKind.String && double.TryParse(prop.GetString(), out double sVal))
+                        return sVal;
                 }
             }
-            catch
-            {
-            }
+            return null;
         }
 
-        private void ReadPointCurrentData(object point, PointResultViewModel vm)
+        private static DateTime? TryGetDate(JsonElement elem, params string[] names)
         {
-            try
+            foreach (var n in names)
             {
-                var refreshMethod = point.GetType().GetMethod("Refresh", Type.EmptyTypes);
-                refreshMethod?.Invoke(point, null);
-
-                var dataProp = point.GetType().GetProperty("Data");
-                object? dataObj = dataProp?.GetValue(point);
-
-                if (dataObj == null)
+                if (elem.TryGetProperty(n, out var prop))
                 {
-                    vm.Status = "Нет объекта данных";
-                    return;
-                }
-
-                var dataType = dataObj.GetType();
-
-                var getMethod = dataType.GetMethods()
-                    .FirstOrDefault(m => m.Name.Contains("Current") && m.GetParameters().Length == 0);
-
-                object? record = null;
-
-                if (getMethod != null)
-                {
-                    record = getMethod.Invoke(dataObj, null);
-                    if (record is Task task)
-                    {
-                        task.GetAwaiter().GetResult();
-                        var resultProp = task.GetType().GetProperty("Result");
-                        record = resultProp?.GetValue(task);
-                    }
-                }
-                else
-                {
-                    var prop = dataType.GetProperties()
-                        .FirstOrDefault(p => p.Name.Contains("Current"));
-                    record = prop?.GetValue(dataObj);
-                }
-
-                if (record is IEnumerable enumerable && record is not string)
-                {
-                    record = enumerable.Cast<object>().LastOrDefault();
-                }
-
-                if (record != null)
-                {
-                    vm.DeviceTime = GetPropValue<DateTime?>(record, "DateTime", "DeviceTime", "Date") ?? DateTime.Now;
-                    vm.T1 = GetPropValue<double?>(record, "T_in", "T1", "TemperatureIn");
-                    vm.T2 = GetPropValue<double?>(record, "T_out", "T2", "TemperatureOut");
-                    vm.P1 = GetPropValue<double?>(record, "P_in", "P1", "PressureIn");
-                    vm.V1 = GetPropValue<double?>(record, "V_in", "V1", "FlowIn", "VolumeIn");
-                    vm.Status = "Опрошено";
-                }
-                else
-                {
-                    vm.Status = "Ожидание данных...";
+                    if (prop.TryGetDateTime(out var dt))
+                        return dt;
+                    if (prop.ValueKind == JsonValueKind.String && DateTime.TryParse(prop.GetString(), out var sDt))
+                        return sDt;
                 }
             }
-            catch (Exception ex)
-            {
-                vm.Status = $"Ошибка: {ex.InnerException?.Message ?? ex.Message}";
-            }
+            return null;
         }
+    }
 
-        private static T? GetPropValue<T>(object obj, params string[] propNames)
-        {
-            var type = obj.GetType();
-            foreach (var name in propNames)
-            {
-                var prop = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-                if (prop != null)
-                {
-                    var val = prop.GetValue(obj);
-                    if (val is T typedVal) return typedVal;
-                    if (val != null)
-                    {
-                        try
-                        {
-                            return (T)Convert.ChangeType(val, Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T));
-                        }
-                        catch { }
-                    }
-                }
-            }
-            return default;
-        }
+    public class MeasurePointItem
+    {
+        public int Id { get; set; }
+        public string Title { get; set; } = string.Empty;
     }
 
     public class UserSettings
