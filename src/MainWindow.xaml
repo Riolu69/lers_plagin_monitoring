@@ -150,7 +150,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Верхняя панель подключения -->
+        <!-- Верхняя панель -->
         <Border Grid.Row="0" Background="{StaticResource CardBackground}" CornerRadius="14" Padding="16,14" Margin="0,0,0,16">
             <Border.Effect>
                 <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/>
@@ -166,22 +166,18 @@
                         <TextBlock Text="Сервер" FontSize="11" Foreground="{StaticResource LabelSecondary}" Margin="2,0,0,4"/>
                         <TextBox x:Name="TxtHost" Width="130" Text="localhost"/>
                     </StackPanel>
-
                     <StackPanel Margin="0,0,12,0">
                         <TextBlock Text="Порт" FontSize="11" Foreground="{StaticResource LabelSecondary}" Margin="2,0,0,4"/>
                         <TextBox x:Name="TxtPort" Width="65" Text="10000"/>
                     </StackPanel>
-
                     <StackPanel Margin="0,0,12,0">
                         <TextBlock Text="Логин" FontSize="11" Foreground="{StaticResource LabelSecondary}" Margin="2,0,0,4"/>
                         <TextBox x:Name="TxtLogin" Width="100"/>
                     </StackPanel>
-
                     <StackPanel Margin="0,0,14,0">
                         <TextBlock Text="Пароль" FontSize="11" Foreground="{StaticResource LabelSecondary}" Margin="2,0,0,4"/>
                         <PasswordBox x:Name="TxtPassword" Width="100"/>
                     </StackPanel>
-
                     <CheckBox x:Name="ChkRemember" Content="Запомнить" IsChecked="True" 
                               VerticalAlignment="Bottom" Margin="0,0,10,8" 
                               FontSize="12" Foreground="{StaticResource LabelSecondary}"/>
@@ -205,7 +201,7 @@
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Левая карточка: Объекты и точки учёта -->
+            <!-- Левая карточка: Точки учёта -->
             <Border Grid.Column="0" Background="{StaticResource CardBackground}" CornerRadius="14" Margin="0,0,8,0" Padding="14">
                 <Border.Effect>
                     <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/>
@@ -220,7 +216,6 @@
                     <TextBlock Grid.Row="0" Text="Объекты и точки учёта" FontWeight="SemiBold" FontSize="14" 
                                Foreground="{StaticResource LabelPrimary}" Margin="2,0,0,8"/>
 
-                    <!-- Поле быстрого поиска -->
                     <TextBox Grid.Row="1" x:Name="TxtSearch" Margin="0,0,0,10" Padding="8,5" 
                              TextChanged="TxtSearch_TextChanged" />
 
@@ -255,7 +250,7 @@
                 </Grid>
             </Border>
 
-            <!-- Правая карточка: Результаты мониторинга -->
+            <!-- Правая карточка: Таблица и фильтр колонок -->
             <Border Grid.Column="1" Background="{StaticResource CardBackground}" CornerRadius="14" Margin="8,0,0,0" Padding="14">
                 <Border.Effect>
                     <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/>
@@ -266,8 +261,30 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Text="Текущие параметры" FontWeight="SemiBold" FontSize="14" 
-                               Foreground="{StaticResource LabelPrimary}" Margin="2,0,0,12"/>
+                    <Grid Grid.Row="0" Margin="2,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        
+                        <TextBlock Grid.Column="0" Text="Текущие параметры" FontWeight="SemiBold" FontSize="14" 
+                                   Foreground="{StaticResource LabelPrimary}" VerticalAlignment="Center"/>
+                        
+                        <!-- Фильтры отображения колонок -->
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <TextBlock Text="Скрыть/Показать:" FontSize="12" Foreground="{StaticResource LabelSecondary}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <CheckBox Content="T1" IsChecked="True" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="T2" IsChecked="True" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="T3" IsChecked="False" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="P1" IsChecked="True" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="P2" IsChecked="False" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="V1" IsChecked="True" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="V2" IsChecked="False" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="M1" IsChecked="False" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="M2" IsChecked="False" Margin="0,0,6,0" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="Q"  IsChecked="False" Margin="0,0,0,0" Click="ColumnToggle_Click"/>
+                        </StackPanel>
+                    </Grid>
 
                     <Border Grid.Row="1" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrushColor}" BorderThickness="1">
                         <DataGrid x:Name="GridResults" AutoGenerateColumns="False" IsReadOnly="True">
@@ -275,10 +292,18 @@
                                 <DataGridTextColumn Header="Объект учёта" Binding="{Binding NodeTitle}" Width="160"/>
                                 <DataGridTextColumn Header="Точка" Binding="{Binding Title}" Width="120"/>
                                 <DataGridTextColumn Header="Время прибора" Binding="{Binding DeviceTime, StringFormat=\{0:dd.MM.yyyy HH:mm\}}" Width="130"/>
-                                <DataGridTextColumn Header="T1 (°C)" Binding="{Binding T1, StringFormat=\{0:F2\}}" Width="75"/>
-                                <DataGridTextColumn Header="T2 (°C)" Binding="{Binding T2, StringFormat=\{0:F2\}}" Width="75"/>
-                                <DataGridTextColumn Header="P1 (атм)" Binding="{Binding P1, StringFormat=\{0:F2\}}" Width="75"/>
-                                <DataGridTextColumn Header="V1 (м³/ч)" Binding="{Binding V1, StringFormat=\{0:F3\}}" Width="80"/>
+                                
+                                <DataGridTextColumn Header="T1 (°C)" Binding="{Binding T1, StringFormat=\{0:F2\}}" Width="65"/>
+                                <DataGridTextColumn Header="T2 (°C)" Binding="{Binding T2, StringFormat=\{0:F2\}}" Width="65"/>
+                                <DataGridTextColumn Header="T3 (°C)" Binding="{Binding T3, StringFormat=\{0:F2\}}" Width="65" Visibility="Collapsed"/>
+                                <DataGridTextColumn Header="P1 (атм)" Binding="{Binding P1, StringFormat=\{0:F2\}}" Width="65"/>
+                                <DataGridTextColumn Header="P2 (атм)" Binding="{Binding P2, StringFormat=\{0:F2\}}" Width="65" Visibility="Collapsed"/>
+                                <DataGridTextColumn Header="V1 (м³/ч)" Binding="{Binding V1, StringFormat=\{0:F3\}}" Width="70"/>
+                                <DataGridTextColumn Header="V2 (м³/ч)" Binding="{Binding V2, StringFormat=\{0:F3\}}" Width="70" Visibility="Collapsed"/>
+                                <DataGridTextColumn Header="M1 (т)" Binding="{Binding M1, StringFormat=\{0:F3\}}" Width="70" Visibility="Collapsed"/>
+                                <DataGridTextColumn Header="M2 (т)" Binding="{Binding M2, StringFormat=\{0:F3\}}" Width="70" Visibility="Collapsed"/>
+                                <DataGridTextColumn Header="Q (Гкал)" Binding="{Binding Q, StringFormat=\{0:F3\}}" Width="70" Visibility="Collapsed"/>
+                                
                                 <DataGridTextColumn Header="Статус" Binding="{Binding Status}" Width="*"/>
                             </DataGrid.Columns>
                         </DataGrid>
