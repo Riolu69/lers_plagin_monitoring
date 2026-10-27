@@ -578,13 +578,14 @@ namespace LersMonitor
                                         Limits = limits,
                                         T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply"),
                                         T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return"),
+                                        T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value"),
                                         P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply"),
                                         P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return"),
                                         V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply"),
                                         V2 = ExtractParameterValue(root, "v_out", "v2", "volume2", "V2", "V_out", "volume_return"),
                                         M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply"),
                                         M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return"),
-                                        Q  = ExtractParameterValue(root, "q", "heat", "energy", "Q", "Q_in", "q_total"),
+                                        Q  = ExtractParameterValue(root, "q_delta", "q", "q_in", "q_out", "q_gvs", "Q_delta", "Q_in", "Q_out", "Q", "heat", "heatEnergy", "thermalEnergy", "q_total", "heatPower", "q1", "q2"),
                                         Status = "Снято"
                                     };
 
@@ -752,7 +753,7 @@ namespace LersMonitor
                                         vm.M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply");
                                         vm.M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return");
                                         
-                                        vm.Q  = ExtractParameterValue(root, "q", "heat", "energy", "Q", "Q_in", "q_total");
+                                        vm.Q  = ExtractParameterValue(root, "q_delta", "q", "q_in", "q_out", "q_gvs", "Q_delta", "Q_in", "Q_out", "Q", "heat", "heatEnergy", "thermalEnergy", "q_total", "heatPower", "q1", "q2");
 
                                         vm.Status = "Опрошено успешно";
                                         receivedFreshData = true;
@@ -779,8 +780,14 @@ namespace LersMonitor
                                     vm.DeviceTime = TryGetDate(root, "dateTime", "deviceTime", "date");
                                     vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
                                     vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
+                                    vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
                                     vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
+                                    vm.P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return");
                                     vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
+                                    vm.V2 = ExtractParameterValue(root, "v_out", "v2", "volume2", "V2", "V_out", "volume_return");
+                                    vm.M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply");
+                                    vm.M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return");
+                                    vm.Q  = ExtractParameterValue(root, "q_delta", "q", "q_in", "q_out", "q_gvs", "Q_delta", "Q_in", "Q_out", "Q", "heat", "heatEnergy", "thermalEnergy", "q_total", "heatPower", "q1", "q2");
                                     vm.RefreshColors();
                                 }
                             }
@@ -813,7 +820,7 @@ namespace LersMonitor
                 if (root.TryGetProperty(name, out var prop))
                 {
                     if (prop.ValueKind == JsonValueKind.Number && prop.TryGetDouble(out double val)) return val;
-                    if (prop.ValueKind == JsonValueKind.String && double.TryParse(prop.GetString(), out double sVal)) return sVal;
+                    if (prop.ValueKind == JsonValueKind.String && double.TryParse(prop.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out double sVal)) return sVal;
                 }
             }
 
@@ -835,19 +842,18 @@ namespace LersMonitor
                                 if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("parameterType", out var ptProp)) typeName = ptProp.ToString();
                                 if (string.IsNullOrEmpty(typeName) && item.TryGetProperty("title", out var titProp)) typeName = titProp.ToString();
 
-                                bool matchesName = targetNames.Any(tn => typeName.IndexOf(tn, StringComparison.OrdinalIgnoreCase) >= 0);
+                                bool matchesName = targetNames.Any(tn => 
+                                    typeName.Equals(tn, StringComparison.OrdinalIgnoreCase) ||
+                                    typeName.IndexOf(tn, StringComparison.OrdinalIgnoreCase) >= 0);
 
-                                if (matchesName || prop.Name.Equals("values", StringComparison.OrdinalIgnoreCase))
+                                if (matchesName)
                                 {
                                     if (item.TryGetProperty("value", out var valProp) || 
                                         item.TryGetProperty("val", out valProp) || 
                                         item.TryGetProperty("currentValue", out valProp))
                                     {
-                                        if (matchesName || targetNames.Length == 0)
-                                        {
-                                            if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out double v)) return v;
-                                            if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString(), out double sv)) return sv;
-                                        }
+                                        if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out double v)) return v;
+                                        if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out double sv)) return sv;
                                     }
                                 }
                             }
