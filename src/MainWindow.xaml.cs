@@ -32,6 +32,7 @@ namespace LersMonitor
         private UserSettings _settings = new();
         
         private List<MeasurePointItem> _editingPoints = new();
+        private CancellationTokenSource? _generalMonitorCts;
         private CancellationTokenSource? _trendCts;
         private int _activeTrendPointId = 0;
 
@@ -43,6 +44,11 @@ namespace LersMonitor
             InitializeComponent();
             GridResults.ItemsSource = _results;
             GridTrend.ItemsSource = _trendHistory;
+            
+            // Заполнение выпадающего списка длительности мониторинга (1-10 минут, дефолт 3)
+            CmbTrendDuration.ItemsSource = Enumerable.Range(1, 10).ToList();
+            CmbTrendDuration.SelectedItem = 3;
+
             LoadUserSettings();
         }
 
@@ -132,6 +138,7 @@ namespace LersMonitor
         
         protected override void OnClosed(EventArgs e)
         {
+            _generalMonitorCts?.Cancel();
             StopNativeLersTrend();
             SaveUserSettings();
             base.OnClosed(e);
@@ -517,7 +524,7 @@ namespace LersMonitor
             return null;
         }
 
-        // --- МОНИТОРИНГ ТЕКУЩИХ (НАТИВНЫЙ РЕЖИМ ЛЭРС) ---
+        // --- МОНИТОРИНГ ТЕКУЩИХ (НАТИВНЫЙ РЕЖИМ ЛЭРС С АВТООГРАНИЧЕНИЕМ ПО ВРЕМЕНИ) ---
         private async void BtnStartTrend_Click(object sender, RoutedEventArgs e)
         {
             if (CmbTrendPoint.SelectedItem is not MeasurePointItem selectedPoint)
@@ -526,6 +533,9 @@ namespace LersMonitor
                 return;
             }
 
+            int durationMinutes = CmbTrendDuration.SelectedItem is int min ? min : 3;
+            var maxEndTime = DateTime.UtcNow.AddMinutes(durationMinutes);
+
             _activeTrendPointId = selectedPoint.Id;
             _trendCts = new CancellationTokenSource();
             var token = _trendCts.Token;
@@ -533,10 +543,11 @@ namespace LersMonitor
             BtnStartTrend.Visibility = Visibility.Collapsed;
             BtnStopTrend.Visibility = Visibility.Visible;
             CmbTrendPoint.IsEnabled = false;
+            CmbTrendDuration.IsEnabled = false;
 
             _settings.PointLimits.TryGetValue(selectedPoint.Id, out var limits);
 
-            TxtStatus.Text = $"Запуск штатного мониторинга текущих для {selectedPoint.Title}...";
+            TxtStatus.Text = $"Запуск мониторинга для {selectedPoint.Title} (макс. {durationMinutes} мин)...";
 
             try
             {
@@ -553,6 +564,12 @@ namespace LersMonitor
 
                 while (!token.IsCancellationRequested)
                 {
+                    if (DateTime.UtcNow >= maxEndTime)
+                    {
+                        TxtStatus.Text = $"Лимит времени ({durationMinutes} мин) исчерпан. Опрос завершён.";
+                        break;
+                    }
+
                     try
                     {
                         var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{selectedPoint.Id}/Consumption/Last", token);
@@ -591,7 +608,9 @@ namespace LersMonitor
 
                                     _trendHistory.Insert(0, row);
                                     row.RefreshColors();
-                                    TxtStatus.Text = $"Получены данные: {timeNow:HH:mm:ss}";
+                                    
+                                    var remaining = maxEndTime - DateTime.UtcNow;
+                                    TxtStatus.Text = $"Данные: {timeNow:HH:mm:ss} (осталось {(int)remaining.TotalMinutes} мин {(int)remaining.Seconds} сек)";
                                 }
                             }
                         }
@@ -609,7 +628,9 @@ namespace LersMonitor
                 BtnStartTrend.Visibility = Visibility.Visible;
                 BtnStopTrend.Visibility = Visibility.Collapsed;
                 CmbTrendPoint.IsEnabled = true;
-                TxtStatus.Text = "Мониторинг точки остановлен.";
+                CmbTrendDuration.IsEnabled = true;
+                if (!TxtStatus.Text.StartsWith("Лимит времени"))
+                    TxtStatus.Text = "Мониторинг точки остановлен.";
             }
         }
 
@@ -638,6 +659,12 @@ namespace LersMonitor
             _trendHistory.Clear();
         }
 
+        private void BtnCancelMonitor_Click(object sender, RoutedEventArgs e)
+        {
+            _generalMonitorCts?.Cancel();
+            TxtStatus.Text = "Опрос отменен пользователем.";
+        }
+
         // --- ОБЩИЙ ОПРОС ВЫБРАННЫХ ТОЧЕК ---
         private async void BtnStartMonitor_Click(object sender, RoutedEventArgs e)
         {
@@ -649,6 +676,9 @@ namespace LersMonitor
             }
 
             SaveUserSettings(selectedPoints.Select(p => p.Id).ToList());
+
+            _generalMonitorCts = new CancellationTokenSource();
+            var token = _generalMonitorCts.Token;
 
             _results.Clear();
             foreach (var p in selectedPoints)
@@ -667,6 +697,7 @@ namespace LersMonitor
             try
             {
                 BtnStartMonitor.IsEnabled = false;
+                BtnCancelMonitor.Visibility = Visibility.Visible;
                 TxtStatus.Text = "Фиксация времени до опроса...";
 
                 var initialTimes = new Dictionary<int, DateTime?>();
@@ -674,10 +705,10 @@ namespace LersMonitor
                 {
                     try
                     {
-                        var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
+                        var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last", token);
                         if (res.IsSuccessStatusCode)
                         {
-                            var json = await res.Content.ReadAsStringAsync();
+                            var json = await res.Content.ReadAsStringAsync(token);
                             if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
                             {
                                 using var doc = JsonDocument.Parse(json);
@@ -688,96 +719,89 @@ namespace LersMonitor
                     catch { }
                 }));
 
-                TxtStatus.Text = "Запуск ручного опроса оборудования...";
+                TxtStatus.Text = "Запуск опроса оборудования...";
 
-                foreach (var p in selectedPoints)
+                // Группируем по узлу, опрашиваем только одну ведущую точку
+                var groups = selectedPoints.GroupBy(p => p.NodeTitle).ToList();
+                foreach (var grp in groups)
                 {
+                    var mainPt = grp.First();
                     try
                     {
-                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{p.Id}/Currents?once=true");
+                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{mainPt.Id}/Currents?once=true");
                         pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
                         pollReq.Content.Headers.ContentLength = 0;
-                        await _http.SendAsync(pollReq);
+                        await _http.SendAsync(pollReq, token);
                     }
                     catch { }
-                    await Task.Delay(80);
                 }
 
-                TxtStatus.Text = "Ожидание ответа приборов...";
+                TxtStatus.Text = "Опрос запущен, ожидание обновления...";
 
                 const int maxChecks = 25;
-                const int checkIntervalMs = 3000;
+                const int checkIntervalMs = 2000;
 
-                var pollingTasks = selectedPoints.Select(async p =>
+                var pollingTasks = groups.Select(async grp =>
                 {
-                    var vm = _results.FirstOrDefault(r => r.Id == p.Id);
-                    if (vm == null) return;
-
-                    initialTimes.TryGetValue(p.Id, out var timeBefore);
-                    bool receivedFreshData = false;
+                    var groupPointIds = grp.Select(x => x.Id).ToHashSet();
+                    bool nodeFinished = false;
 
                     for (int attempt = 1; attempt <= maxChecks; attempt++)
                     {
-                        vm.Status = $"Опрос прибора ({attempt}/{maxChecks})...";
-                        await Task.Delay(checkIntervalMs);
+                        if (token.IsCancellationRequested) break;
 
-                        try
+                        foreach (var pt in grp)
                         {
-                            var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
-                            if (res.IsSuccessStatusCode)
+                            var vm = _results.FirstOrDefault(r => r.Id == pt.Id);
+                            if (vm != null && vm.Status != "Опрошено успешно")
+                                vm.Status = $"Опрос ({attempt}/{maxChecks})...";
+                        }
+
+                        await Task.Delay(checkIntervalMs, token);
+
+                        // Проверяем все точки данного узла
+                        bool nodeHasNewData = false;
+                        var fetchedData = new Dictionary<int, (DateTime? dt, JsonElement root)>();
+
+                        foreach (var pt in grp)
+                        {
+                            try
                             {
-                                var json = await res.Content.ReadAsStringAsync();
-                                if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                                var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{pt.Id}/Consumption/Last", token);
+                                if (res.IsSuccessStatusCode)
                                 {
-                                    using var doc = JsonDocument.Parse(json);
-                                    var root = doc.RootElement;
-                                    var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
-
-                                    bool isNew = (timeBefore == null && timeNow != null) || 
-                                                 (timeNow != null && timeBefore != null && timeNow > timeBefore);
-
-                                    if (isNew)
+                                    var json = await res.Content.ReadAsStringAsync(token);
+                                    if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
                                     {
-                                        vm.DeviceTime = timeNow;
-                                        
-                                        vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
-                                        vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
-                                        vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
-                                        
-                                        vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
-                                        vm.P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return");
-                                        
-                                        vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
-                                        vm.V2 = ExtractParameterValue(root, "v_out", "v2", "volume2", "V2", "V_out", "volume_return");
-                                        
-                                        vm.M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply");
-                                        vm.M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return");
-                                        
-                                        vm.Q  = ExtractParameterValue(root, "q_delta", "q", "q_in", "q_out", "q_gvs", "Q_delta", "Q_in", "Q_out", "Q", "heat", "heatEnergy", "thermalEnergy", "q_total", "heatPower", "q1", "q2");
+                                        using var doc = JsonDocument.Parse(json);
+                                        var root = doc.RootElement.Clone();
+                                        var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
 
-                                        vm.Status = "Опрошено успешно";
-                                        receivedFreshData = true;
-                                        break;
+                                        fetchedData[pt.Id] = (timeNow, root);
+
+                                        initialTimes.TryGetValue(pt.Id, out var timeBefore);
+                                        if (timeNow != null && (timeBefore == null || timeNow > timeBefore))
+                                        {
+                                            nodeHasNewData = true;
+                                        }
                                     }
                                 }
                             }
+                            catch { }
                         }
-                        catch { }
-                    }
 
-                    if (!receivedFreshData)
-                    {
-                        try
+                        // Если хотя бы одна точка узла получила свежие данные — обновляем ВЕСЬ узел и выходим
+                        if (nodeHasNewData)
                         {
-                            var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
-                            if (res.IsSuccessStatusCode)
+                            foreach (var pt in grp)
                             {
-                                var json = await res.Content.ReadAsStringAsync();
-                                if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                                var vm = _results.FirstOrDefault(r => r.Id == pt.Id);
+                                if (vm == null) continue;
+
+                                if (fetchedData.TryGetValue(pt.Id, out var data))
                                 {
-                                    using var doc = JsonDocument.Parse(json);
-                                    var root = doc.RootElement;
-                                    vm.DeviceTime = TryGetDate(root, "dateTime", "deviceTime", "date");
+                                    vm.DeviceTime = data.dt;
+                                    var root = data.root;
                                     vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
                                     vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
                                     vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
@@ -790,17 +814,37 @@ namespace LersMonitor
                                     vm.Q  = ExtractParameterValue(root, "q_delta", "q", "q_in", "q_out", "q_gvs", "Q_delta", "Q_in", "Q_out", "Q", "heat", "heatEnergy", "thermalEnergy", "q_total", "heatPower", "q1", "q2");
                                     vm.RefreshColors();
                                 }
+                                vm.Status = "Опрошено успешно";
+                            }
+
+                            nodeFinished = true;
+                            break;
+                        }
+                    }
+
+                    if (!nodeFinished && !token.IsCancellationRequested)
+                    {
+                        foreach (var pt in grp)
+                        {
+                            var vm = _results.FirstOrDefault(r => r.Id == pt.Id);
+                            if (vm != null && vm.Status != "Опрошено успешно")
+                            {
+                                vm.Status = "Таймаут (данные не обновились)";
                             }
                         }
-                        catch { }
-
-                        vm.Status = "Таймаут (данные не обновились)";
                     }
                 });
 
                 await Task.WhenAll(pollingTasks);
-                TxtStatus.Text = "Мониторинг завершен.";
+                if (!token.IsCancellationRequested)
+                    TxtStatus.Text = "Мониторинг завершен.";
                 SaveUserSettings();
+            }
+            catch (OperationCanceledException)
+            {
+                TxtStatus.Text = "Опрос отменен.";
+                foreach (var r in _results.Where(x => x.Status.StartsWith("Опрос")))
+                    r.Status = "Отменено";
             }
             catch (Exception ex)
             {
@@ -810,6 +854,7 @@ namespace LersMonitor
             finally
             {
                 BtnStartMonitor.IsEnabled = true;
+                BtnCancelMonitor.Visibility = Visibility.Collapsed;
             }
         }
 

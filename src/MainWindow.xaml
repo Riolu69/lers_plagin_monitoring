@@ -16,6 +16,7 @@
         <SolidColorBrush x:Key="LabelSecondary" Color="#86868B"/>
         <SolidColorBrush x:Key="AccentBlue" Color="#0071E3"/>
         <SolidColorBrush x:Key="AccentGreen" Color="#34C759"/>
+        <SolidColorBrush x:Key="AccentRed" Color="#FF3B30"/>
         <SolidColorBrush x:Key="InputBackground" Color="#FBFBFD"/>
         <SolidColorBrush x:Key="HeaderBackground" Color="#FAFAFC"/>
         <SolidColorBrush x:Key="SelectionBackground" Color="#E8F2FE"/>
@@ -191,6 +192,10 @@
 
         <Style x:Key="AppleGreenButton" TargetType="Button" BasedOn="{StaticResource ApplePrimaryButton}">
             <Setter Property="Background" Value="{DynamicResource AccentGreen}"/>
+        </Style>
+
+        <Style x:Key="AppleRedButton" TargetType="Button" BasedOn="{StaticResource ApplePrimaryButton}">
+            <Setter Property="Background" Value="{DynamicResource AccentRed}"/>
         </Style>
         
         <Style x:Key="AppleGhostButton" TargetType="Button">
@@ -481,6 +486,11 @@
                                 <Button x:Name="BtnStartMonitor" Content="Опросить выбранные" 
                                         Style="{StaticResource AppleGreenButton}" 
                                         Click="BtnStartMonitor_Click" IsEnabled="False"/>
+
+                                <Button x:Name="BtnCancelMonitor" Content="✕ Отмена опроса" 
+                                        Style="{StaticResource AppleRedButton}" 
+                                        Margin="10,0,0,0" Visibility="Collapsed"
+                                        Click="BtnCancelMonitor_Click"/>
                             </StackPanel>
                         </Grid>
                         
@@ -555,19 +565,25 @@
                         <Grid Grid.Row="0" Margin="0,0,0,16">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="Точка учёта:" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                <ComboBox x:Name="CmbTrendPoint" Width="400" DisplayMemberPath="DisplayName"/>
+                                <ComboBox x:Name="CmbTrendPoint" Width="380" DisplayMemberPath="DisplayName"/>
                             </StackPanel>
 
-                            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,0,0">
+                                <TextBlock Text="Длительность (мин):" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ComboBox x:Name="CmbTrendDuration" Width="65"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="3" Orientation="Horizontal">
                                 <Button x:Name="BtnClearTrend" Content="Очистить историю" Style="{StaticResource AppleGhostButton}" Margin="0,0,14,0" Click="BtnClearTrend_Click"/>
                                 <Button x:Name="BtnStartTrend" Content="▶ Запустить мониторинг" Style="{StaticResource AppleGreenButton}" Click="BtnStartTrend_Click"/>
-                                <Button x:Name="BtnStopTrend" Content="⏹ Остановить" Style="{StaticResource ApplePrimaryButton}" Background="#FF3B30" Visibility="Collapsed" Click="BtnStopTrend_Click"/>
+                                <Button x:Name="BtnStopTrend" Content="⏹ Отмена / Стоп" Style="{StaticResource AppleRedButton}" Visibility="Collapsed" Click="BtnStopTrend_Click"/>
                             </StackPanel>
                         </Grid>
 
