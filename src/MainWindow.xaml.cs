@@ -347,9 +347,7 @@ namespace LersMonitor
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка подключения по REST API:
-
-{ex.Message}", "Ошибка подключения", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Ошибка подключения по REST API:\n\n{ex.Message}", "Ошибка подключения", MessageBoxButton.OK, MessageBoxImage.Error);
                 TxtStatus.Text = "Ошибка подключения";
             }
             finally
