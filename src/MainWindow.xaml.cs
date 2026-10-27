@@ -347,7 +347,6 @@ namespace LersMonitor
             }
             catch (Exception ex)
             {
-                // Ошибка с неэкранированным переносом строки была здесь — исправлена на \n
                 MessageBox.Show($"Ошибка подключения по REST API:\n\n{ex.Message}", "Ошибка подключения", MessageBoxButton.OK, MessageBoxImage.Error);
                 TxtStatus.Text = "Ошибка подключения";
             }
@@ -890,7 +889,7 @@ namespace LersMonitor
             }
             catch (Exception ex)
             {
-                MessageBox.Show(\$"Ошибка во время опроса: {ex.Message}");
+                MessageBox.Show($"Ошибка во время опроса: {ex.Message}");
                 TxtStatus.Text = "Сбой операции";
             }
             finally
@@ -972,7 +971,7 @@ namespace LersMonitor
         public int Id { get; set; }
         public string Title { get; set; } = string.Empty;
         public string NodeTitle { get; set; } = string.Empty;
-        public string DisplayName => \$"{NodeTitle} — {Title}";
+        public string DisplayName => $"{NodeTitle} — {Title}";
     }
 
     public class PointThresholds
