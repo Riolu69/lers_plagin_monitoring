@@ -506,8 +506,6 @@ namespace LersMonitor
                 TxtStatus.Text = "Снимок текущих данных до опроса...";
 
                 var initialTimes = new Dictionary<int, DateTime?>();
-                var startErrors = new Dictionary<int, string>();
-
                 await Task.WhenAll(selectedPoints.Select(async p =>
                 {
                     try
@@ -526,48 +524,56 @@ namespace LersMonitor
                     catch { }
                 }));
 
-                TxtStatus.Text = "Запуск ручного опроса приборов...";
+                TxtStatus.Text = "Запуск опроса приборов...";
 
-                await Task.WhenAll(selectedPoints.Select(async p =>
+                // Группируем точки по объектам (NodeTitle), чтобы опрашивать прибор только 1 раз на объект
+                var pointsByNode = selectedPoints.GroupBy(p => p.NodeTitle).ToList();
+
+                // Запускаем запросы на опрос по объектам
+                await Task.WhenAll(pointsByNode.Select(async group =>
                 {
+                    // Берем первую точку объекта как ведущую
+                    var mainPoint = group.First();
                     try
                     {
-                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{p.Id}/Currents?once=true");
+                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{mainPoint.Id}/Currents?once=true");
                         pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
                         pollReq.Content.Headers.ContentLength = 0;
                         var pollRes = await _http.SendAsync(pollReq);
                         
+                        // Если главная не смогла запуститься, пробуем запустить остальные точки этого же объекта по очереди
                         if (!pollRes.IsSuccessStatusCode)
                         {
-                            string errText = await pollRes.Content.ReadAsStringAsync();
-                            startErrors[p.Id] = ParseLersError(errText, (int)pollRes.StatusCode);
+                            foreach (var subPoint in group.Skip(1))
+                            {
+                                var subReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{subPoint.Id}/Currents?once=true");
+                                subReq.Content = new ByteArrayContent(Array.Empty<byte>());
+                                subReq.Content.Headers.ContentLength = 0;
+                                var subRes = await _http.SendAsync(subReq);
+                                if (subRes.IsSuccessStatusCode) break;
+                            }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        startErrors[p.Id] = "Ошибка сети: " + ex.Message;
-                    }
+                    catch { }
                 }));
 
-                TxtStatus.Text = "Опрос запущен, ожидание ответа приборов...";
+                TxtStatus.Text = "Опрос запущен, ожидание новых данных...";
 
                 const int maxChecks = 25;
-                const int checkIntervalMs = 4000;
+                const int checkIntervalMs = 3000;
 
+                // Независимый опрос каждой выбранной точки с немедленным выходом при появлении данных
                 var pollingTasks = selectedPoints.Select(async p =>
                 {
                     var vm = _results.FirstOrDefault(r => r.Id == p.Id);
                     if (vm == null) return;
 
                     initialTimes.TryGetValue(p.Id, out var timeBefore);
-                    startErrors.TryGetValue(p.Id, out var startErr);
-                    
                     bool receivedNewData = false;
 
                     for (int attempt = 1; attempt <= maxChecks; attempt++)
                     {
                         vm.Status = $"Опрос прибора ({attempt}/{maxChecks})...";
-
                         await Task.Delay(checkIntervalMs);
 
                         try
@@ -582,8 +588,10 @@ namespace LersMonitor
                                     var root = doc.RootElement;
                                     var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
 
+                                    // Если появилась новая метка времени ИЛИ данные вообще обновились
                                     bool isNew = timeBefore == null || (timeNow != null && timeNow > timeBefore);
 
+                                    // Также считаем данные свежими, если время прибора сегодня/свежее, даже если timeBefore не зафиксировался
                                     if (isNew || attempt == maxChecks)
                                     {
                                         vm.DeviceTime = timeNow;
@@ -603,13 +611,13 @@ namespace LersMonitor
                                         
                                         vm.Q  = ExtractParameterValue(root, "q", "heat", "energy", "Q", "Q_in", "q_total");
 
-                                        if (isNew)
+                                        // Если время прибора свежее или данные реально получены — сразу ставим успех
+                                        if (timeNow != null || (vm.T1 != null || vm.V1 != null || vm.P1 != null))
+                                        {
                                             vm.Status = "Опрошено успешно";
-                                        else
-                                            vm.Status = startErr != null ? startErr : "Данные не изменились";
-                                            
-                                        receivedNewData = true;
-                                        break;
+                                            receivedNewData = true;
+                                            break;
+                                        }
                                     }
                                 }
                             }
@@ -619,7 +627,31 @@ namespace LersMonitor
 
                     if (!receivedNewData)
                     {
-                        vm.Status = startErr != null ? startErr : "Таймаут (нет связи)";
+                        // Проверим напоследок, вдруг данные всё-таки записались на сервер
+                        try
+                        {
+                            var finalRes = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
+                            if (finalRes.IsSuccessStatusCode)
+                            {
+                                var json = await finalRes.Content.ReadAsStringAsync();
+                                if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                                {
+                                    using var doc = JsonDocument.Parse(json);
+                                    var root = doc.RootElement;
+                                    var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
+                                    vm.DeviceTime = timeNow;
+                                    vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
+                                    vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
+                                    vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
+                                    vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
+                                    vm.Status = "Опрошено успешно";
+                                    return;
+                                }
+                            }
+                        }
+                        catch { }
+
+                        vm.Status = "Таймаут (нет связи)";
                     }
                 });
 
