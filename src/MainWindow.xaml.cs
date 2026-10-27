@@ -540,7 +540,6 @@ namespace LersMonitor
 
             try
             {
-                // Запускаем непрерывный мониторинг текущих на сервере ЛЭРС (без once=true)
                 try
                 {
                     var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{selectedPoint.Id}/Currents");
@@ -552,7 +551,6 @@ namespace LersMonitor
 
                 DateTime? lastObservedTime = null;
 
-                // Периодически считываем новые данные, которые ЛЭРС записывает каждые ~15 сек
                 while (!token.IsCancellationRequested)
                 {
                     try
@@ -567,7 +565,6 @@ namespace LersMonitor
                                 var root = doc.RootElement;
                                 var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date") ?? DateTime.Now;
 
-                                // Если время записи изменилось — добавляем строку в историю
                                 if (lastObservedTime == null || timeNow > lastObservedTime)
                                 {
                                     lastObservedTime = timeNow;
@@ -601,7 +598,6 @@ namespace LersMonitor
                     catch (OperationCanceledException) { break; }
                     catch { }
 
-                    // Проверка базы каждые 3 секунды
                     await Task.Delay(3000, token);
                 }
             }
@@ -623,7 +619,6 @@ namespace LersMonitor
             {
                 try
                 {
-                    // Останавливаем сессию опроса в ЛЭРС
                     var stopReq = new HttpRequestMessage(HttpMethod.Delete, $"{_baseUrl}/Poll/MeasurePoints/{_activeTrendPointId}/Currents");
                     _http.SendAsync(stopReq);
                 }
@@ -671,24 +666,43 @@ namespace LersMonitor
             try
             {
                 BtnStartMonitor.IsEnabled = false;
-                TxtStatus.Text = "Запуск опроса приборов...";
+                TxtStatus.Text = "Фиксация времени до опроса...";
 
-                var pointsByNode = selectedPoints.GroupBy(p => p.NodeTitle).ToList();
-
-                await Task.WhenAll(pointsByNode.Select(async group =>
+                var initialTimes = new Dictionary<int, DateTime?>();
+                await Task.WhenAll(selectedPoints.Select(async p =>
                 {
-                    var mainPoint = group.First();
                     try
                     {
-                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{mainPoint.Id}/Currents?once=true");
+                        var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
+                        if (res.IsSuccessStatusCode)
+                        {
+                            var json = await res.Content.ReadAsStringAsync();
+                            if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                            {
+                                using var doc = JsonDocument.Parse(json);
+                                initialTimes[p.Id] = TryGetDate(doc.RootElement, "dateTime", "deviceTime", "date");
+                            }
+                        }
+                    }
+                    catch { }
+                }));
+
+                TxtStatus.Text = "Запуск ручного опроса оборудования...";
+
+                foreach (var p in selectedPoints)
+                {
+                    try
+                    {
+                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{p.Id}/Currents?once=true");
                         pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
                         pollReq.Content.Headers.ContentLength = 0;
                         await _http.SendAsync(pollReq);
                     }
                     catch { }
-                }));
+                    await Task.Delay(80);
+                }
 
-                TxtStatus.Text = "Опрос запущен, ожидание данных...";
+                TxtStatus.Text = "Ожидание ответа приборов...";
 
                 const int maxChecks = 25;
                 const int checkIntervalMs = 3000;
@@ -698,7 +712,8 @@ namespace LersMonitor
                     var vm = _results.FirstOrDefault(r => r.Id == p.Id);
                     if (vm == null) return;
 
-                    bool receivedData = false;
+                    initialTimes.TryGetValue(p.Id, out var timeBefore);
+                    bool receivedFreshData = false;
 
                     for (int attempt = 1; attempt <= maxChecks; attempt++)
                     {
@@ -717,27 +732,30 @@ namespace LersMonitor
                                     var root = doc.RootElement;
                                     var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
 
-                                    vm.DeviceTime = timeNow;
-                                    
-                                    vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
-                                    vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
-                                    vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
-                                    
-                                    vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
-                                    vm.P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return");
-                                    
-                                    vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
-                                    vm.V2 = ExtractParameterValue(root, "v_out", "v2", "volume2", "V2", "V_out", "volume_return");
-                                    
-                                    vm.M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply");
-                                    vm.M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return");
-                                    
-                                    vm.Q  = ExtractParameterValue(root, "q", "heat", "energy", "Q", "Q_in", "q_total");
+                                    bool isNew = (timeBefore == null && timeNow != null) || 
+                                                 (timeNow != null && timeBefore != null && timeNow > timeBefore);
 
-                                    if (vm.T1 != null || vm.V1 != null || vm.P1 != null || vm.T2 != null || timeNow != null)
+                                    if (isNew)
                                     {
+                                        vm.DeviceTime = timeNow;
+                                        
+                                        vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
+                                        vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
+                                        vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
+                                        
+                                        vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
+                                        vm.P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return");
+                                        
+                                        vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
+                                        vm.V2 = ExtractParameterValue(root, "v_out", "v2", "volume2", "V2", "V_out", "volume_return");
+                                        
+                                        vm.M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply");
+                                        vm.M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return");
+                                        
+                                        vm.Q  = ExtractParameterValue(root, "q", "heat", "energy", "Q", "Q_in", "q_total");
+
                                         vm.Status = "Опрошено успешно";
-                                        receivedData = true;
+                                        receivedFreshData = true;
                                         break;
                                     }
                                 }
@@ -746,9 +764,30 @@ namespace LersMonitor
                         catch { }
                     }
 
-                    if (!receivedData)
+                    if (!receivedFreshData)
                     {
-                        vm.Status = "Таймаут (нет связи)";
+                        try
+                        {
+                            var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last");
+                            if (res.IsSuccessStatusCode)
+                            {
+                                var json = await res.Content.ReadAsStringAsync();
+                                if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                                {
+                                    using var doc = JsonDocument.Parse(json);
+                                    var root = doc.RootElement;
+                                    vm.DeviceTime = TryGetDate(root, "dateTime", "deviceTime", "date");
+                                    vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
+                                    vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
+                                    vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
+                                    vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
+                                    vm.RefreshColors();
+                                }
+                            }
+                        }
+                        catch { }
+
+                        vm.Status = "Таймаут (данные не обновились)";
                     }
                 });
 
