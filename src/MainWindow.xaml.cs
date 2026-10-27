@@ -45,7 +45,6 @@ namespace LersMonitor
             GridResults.ItemsSource = _results;
             GridTrend.ItemsSource = _trendHistory;
             
-            // Заполнение выпадающего списка длительности мониторинга (1-10 минут, дефолт 3)
             CmbTrendDuration.ItemsSource = Enumerable.Range(1, 10).ToList();
             CmbTrendDuration.SelectedItem = 3;
 
@@ -348,7 +347,9 @@ namespace LersMonitor
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка подключения по REST API:\n\n{ex.Message}", "Ошибка подключения", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Ошибка подключения по REST API:
+
+{ex.Message}", "Ошибка подключения", MessageBoxButton.OK, MessageBoxImage.Error);
                 TxtStatus.Text = "Ошибка подключения";
             }
             finally
@@ -524,7 +525,7 @@ namespace LersMonitor
             return null;
         }
 
-        // --- МОНИТОРИНГ ТЕКУЩИХ (НАТИВНЫЙ РЕЖИМ ЛЭРС С АВТООГРАНИЧЕНИЕМ ПО ВРЕМЕНИ) ---
+        // --- МОНИТОРИНГ ТЕКУЩИХ (НАТИВНЫЙ РЕЖИМ ЛЭРС) ---
         private async void BtnStartTrend_Click(object sender, RoutedEventArgs e)
         {
             if (CmbTrendPoint.SelectedItem is not MeasurePointItem selectedPoint)
@@ -721,121 +722,110 @@ namespace LersMonitor
 
                 TxtStatus.Text = "Запуск опроса оборудования...";
 
-                // Группируем по узлу, опрашиваем только одну ведущую точку
-                var groups = selectedPoints.GroupBy(p => p.NodeTitle).ToList();
-                foreach (var grp in groups)
+                // Отправляем команду опроса на КАЖДУЮ точку индивидуально, с небольшой задержкой (чтобы сервер успевал ставить в очередь)
+                foreach (var p in selectedPoints)
                 {
-                    var mainPt = grp.First();
+                    if (token.IsCancellationRequested) break;
                     try
                     {
-                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{mainPt.Id}/Currents?once=true");
+                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{p.Id}/Currents?once=true");
                         pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
                         pollReq.Content.Headers.ContentLength = 0;
                         await _http.SendAsync(pollReq, token);
                     }
                     catch { }
+                    await Task.Delay(100, token);
                 }
 
                 TxtStatus.Text = "Опрос запущен, ожидание обновления...";
 
                 const int maxChecks = 25;
-                const int checkIntervalMs = 2000;
+                const int checkIntervalMs = 3000;
 
-                var pollingTasks = groups.Select(async grp =>
+                // Запускаем независимую проверку обновления ДЛЯ КАЖДОЙ ТОЧКИ
+                var pollingTasks = selectedPoints.Select(async pt =>
                 {
-                    var groupPointIds = grp.Select(x => x.Id).ToHashSet();
-                    bool nodeFinished = false;
+                    var vm = _results.FirstOrDefault(r => r.Id == pt.Id);
+                    if (vm == null) return;
+
+                    initialTimes.TryGetValue(pt.Id, out var timeBefore);
+                    bool pointFinished = false;
 
                     for (int attempt = 1; attempt <= maxChecks; attempt++)
                     {
                         if (token.IsCancellationRequested) break;
-
-                        foreach (var pt in grp)
-                        {
-                            var vm = _results.FirstOrDefault(r => r.Id == pt.Id);
-                            if (vm != null && vm.Status != "Опрошено успешно")
-                                vm.Status = $"Опрос ({attempt}/{maxChecks})...";
-                        }
-
+                        
+                        vm.Status = $"Опрос ({attempt}/{maxChecks})...";
                         await Task.Delay(checkIntervalMs, token);
 
-                        // Проверяем все точки данного узла
-                        bool nodeHasNewData = false;
-                        var fetchedData = new Dictionary<int, (DateTime? dt, JsonElement root)>();
-
-                        foreach (var pt in grp)
+                        try
                         {
-                            try
+                            var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{pt.Id}/Consumption/Last", token);
+                            if (res.IsSuccessStatusCode)
                             {
-                                var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{pt.Id}/Consumption/Last", token);
-                                if (res.IsSuccessStatusCode)
+                                var json = await res.Content.ReadAsStringAsync(token);
+                                if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
                                 {
-                                    var json = await res.Content.ReadAsStringAsync(token);
-                                    if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                                    using var doc = JsonDocument.Parse(json);
+                                    var root = doc.RootElement.Clone();
+                                    var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
+
+                                    // Проверяем, действительно ли получены новые данные ИМЕННО ДЛЯ ЭТОЙ ТОЧКИ
+                                    if (timeNow != null && (timeBefore == null || timeNow > timeBefore))
                                     {
-                                        using var doc = JsonDocument.Parse(json);
-                                        var root = doc.RootElement.Clone();
-                                        var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
-
-                                        fetchedData[pt.Id] = (timeNow, root);
-
-                                        initialTimes.TryGetValue(pt.Id, out var timeBefore);
-                                        if (timeNow != null && (timeBefore == null || timeNow > timeBefore))
-                                        {
-                                            nodeHasNewData = true;
-                                        }
+                                        vm.DeviceTime = timeNow;
+                                        vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
+                                        vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
+                                        vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
+                                        vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
+                                        vm.P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return");
+                                        vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
+                                        vm.V2 = ExtractParameterValue(root, "v_out", "v2", "volume2", "V2", "V_out", "volume_return");
+                                        vm.M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply");
+                                        vm.M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return");
+                                        vm.Q  = ExtractParameterValue(root, "q_delta", "q", "q_in", "q_out", "q_gvs", "Q_delta", "Q_in", "Q_out", "Q", "heat", "heatEnergy", "thermalEnergy", "q_total", "heatPower", "q1", "q2");
+                                        
+                                        vm.RefreshColors();
+                                        vm.Status = "Опрошено успешно";
+                                        pointFinished = true;
+                                        break;
                                     }
                                 }
                             }
-                            catch { }
                         }
-
-                        // Если хотя бы одна точка узла получила свежие данные — обновляем ВЕСЬ узел и выходим
-                        if (nodeHasNewData)
-                        {
-                            foreach (var pt in grp)
-                            {
-                                var vm = _results.FirstOrDefault(r => r.Id == pt.Id);
-                                if (vm == null) continue;
-
-                                if (fetchedData.TryGetValue(pt.Id, out var data))
-                                {
-                                    vm.DeviceTime = data.dt;
-                                    var root = data.root;
-                                    vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
-                                    vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
-                                    vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
-                                    vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
-                                    vm.P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return");
-                                    vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
-                                    vm.V2 = ExtractParameterValue(root, "v_out", "v2", "volume2", "V2", "V_out", "volume_return");
-                                    vm.M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply");
-                                    vm.M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return");
-                                    vm.Q  = ExtractParameterValue(root, "q_delta", "q", "q_in", "q_out", "q_gvs", "Q_delta", "Q_in", "Q_out", "Q", "heat", "heatEnergy", "thermalEnergy", "q_total", "heatPower", "q1", "q2");
-                                    vm.RefreshColors();
-                                }
-                                vm.Status = "Опрошено успешно";
-                            }
-
-                            nodeFinished = true;
-                            break;
-                        }
+                        catch { }
                     }
 
-                    if (!nodeFinished && !token.IsCancellationRequested)
+                    // Если цикл завершился, а новых данных так и нет
+                    if (!pointFinished && !token.IsCancellationRequested)
                     {
-                        foreach (var pt in grp)
+                        // Подгружаем старые данные для отображения
+                        try
                         {
-                            var vm = _results.FirstOrDefault(r => r.Id == pt.Id);
-                            if (vm != null && vm.Status != "Опрошено успешно")
+                            var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{pt.Id}/Consumption/Last");
+                            if (res.IsSuccessStatusCode)
                             {
-                                vm.Status = "Таймаут (данные не обновились)";
+                                var json = await res.Content.ReadAsStringAsync();
+                                if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                                {
+                                    using var doc = JsonDocument.Parse(json);
+                                    var root = doc.RootElement;
+                                    vm.DeviceTime = TryGetDate(root, "dateTime", "deviceTime", "date");
+                                    vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
+                                    vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
+                                    vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
+                                    vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
+                                    vm.RefreshColors();
+                                }
                             }
                         }
+                        catch { }
+                        vm.Status = "Таймаут (данные не обновились)";
                     }
                 });
 
                 await Task.WhenAll(pollingTasks);
+                
                 if (!token.IsCancellationRequested)
                     TxtStatus.Text = "Мониторинг завершен.";
                 SaveUserSettings();
