@@ -10,6 +10,7 @@ using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -27,9 +28,12 @@ namespace LersMonitor
 
         private List<MeasurePointItem> _allPoints = new();
         private readonly ObservableCollection<PointResultViewModel> _results = new();
+        private readonly ObservableCollection<PointResultViewModel> _trendHistory = new();
         private UserSettings _settings = new();
         
-        private MeasurePointItem? _editingPoint = null;
+        private List<MeasurePointItem> _editingPoints = new();
+        private CancellationTokenSource? _trendCts;
+        private int _activeTrendPointId = 0;
 
         private static string SettingsFilePath =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LersMonitor", "settings.json");
@@ -38,6 +42,7 @@ namespace LersMonitor
         {
             InitializeComponent();
             GridResults.ItemsSource = _results;
+            GridTrend.ItemsSource = _trendHistory;
             LoadUserSettings();
         }
 
@@ -127,8 +132,25 @@ namespace LersMonitor
         
         protected override void OnClosed(EventArgs e)
         {
+            StopNativeLersTrend();
             SaveUserSettings();
             base.OnClosed(e);
+        }
+
+        private void TabMode_Checked(object sender, RoutedEventArgs e)
+        {
+            if (ViewGeneral == null || ViewTrend == null) return;
+
+            if (TabAll.IsChecked == true)
+            {
+                ViewGeneral.Visibility = Visibility.Visible;
+                ViewTrend.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                ViewGeneral.Visibility = Visibility.Collapsed;
+                ViewTrend.Visibility = Visibility.Visible;
+            }
         }
 
         private void ChkDarkMode_Click(object sender, RoutedEventArgs e)
@@ -139,6 +161,7 @@ namespace LersMonitor
             SaveUserSettings();
             
             foreach (var r in _results) r.RefreshColors();
+            foreach (var r in _trendHistory) r.RefreshColors();
         }
 
         private void ApplyTheme(bool isDark)
@@ -300,6 +323,9 @@ namespace LersMonitor
                 CmbSystemType.ItemsSource = new List<string> { "Все системы", "Теплоснабжение", "ГВС", "Подпитка", "ХВС" };
                 CmbSystemType.SelectedIndex = 0;
 
+                CmbTrendPoint.ItemsSource = _allPoints;
+                if (_allPoints.Any()) CmbTrendPoint.SelectedIndex = 0;
+
                 ApplyFilters();
 
                 if (_settings.SelectedPointIds != null && _settings.SelectedPointIds.Any())
@@ -349,15 +375,8 @@ namespace LersMonitor
             ListPoints.ItemsSource = filtered.ToList();
         }
 
-        private void BtnSelectAll_Click(object sender, RoutedEventArgs e)
-        {
-            ListPoints.SelectAll();
-        }
-
-        private void BtnClearSelection_Click(object sender, RoutedEventArgs e)
-        {
-            ListPoints.UnselectAll();
-        }
+        private void BtnSelectAll_Click(object sender, RoutedEventArgs e) => ListPoints.SelectAll();
+        private void BtnClearSelection_Click(object sender, RoutedEventArgs e) => ListPoints.UnselectAll();
 
         private void ColumnToggle_Click(object sender, RoutedEventArgs e)
         {
@@ -375,82 +394,119 @@ namespace LersMonitor
             }
         }
 
+        // --- ГРУППОВАЯ И ОДИНОЧНАЯ НАСТРОЙКА ГРАНИЦ ---
         private void BtnSettings_Click(object sender, RoutedEventArgs e)
         {
             var selected = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
-            if (selected.Count != 1)
+            if (!selected.Any())
             {
-                MessageBox.Show("Выберите ровно ОДНУ точку в списке слева для настройки её границ.", "Внимание", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("Выберите хотя бы одну точку для настройки границ.", "Внимание", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            _editingPoint = selected.First();
-            TxtLimitsTitle.Text = $"Границы: {_editingPoint.Title}";
+            _editingPoints = selected;
 
-            if (_settings.PointLimits.TryGetValue(_editingPoint.Id, out var limits))
+            if (_editingPoints.Count == 1)
             {
-                TxtT1Min.Text = limits.T1Min?.ToString();
-                TxtT1Max.Text = limits.T1Max?.ToString();
-                TxtT2Min.Text = limits.T2Min?.ToString();
-                TxtT2Max.Text = limits.T2Max?.ToString();
-                TxtP1Min.Text = limits.P1Min?.ToString();
-                TxtP1Max.Text = limits.P1Max?.ToString();
-                TxtP2Min.Text = limits.P2Min?.ToString();
-                TxtP2Max.Text = limits.P2Max?.ToString();
-                TxtV1Min.Text = limits.V1Min?.ToString();
-                TxtV1Max.Text = limits.V1Max?.ToString();
-                TxtV2Min.Text = limits.V2Min?.ToString();
-                TxtV2Max.Text = limits.V2Max?.ToString();
+                var point = _editingPoints.First();
+                TxtLimitsTitle.Text = $"Границы: {point.Title}";
+                TxtLimitsSubtitle.Text = point.NodeTitle;
+
+                if (_settings.PointLimits.TryGetValue(point.Id, out var limits))
+                {
+                    TxtT1Min.Text = limits.T1Min?.ToString();
+                    TxtT1Max.Text = limits.T1Max?.ToString();
+                    TxtT2Min.Text = limits.T2Min?.ToString();
+                    TxtT2Max.Text = limits.T2Max?.ToString();
+                    TxtP1Min.Text = limits.P1Min?.ToString();
+                    TxtP1Max.Text = limits.P1Max?.ToString();
+                    TxtP2Min.Text = limits.P2Min?.ToString();
+                    TxtP2Max.Text = limits.P2Max?.ToString();
+                    TxtV1Min.Text = limits.V1Min?.ToString();
+                    TxtV1Max.Text = limits.V1Max?.ToString();
+                    TxtV2Min.Text = limits.V2Min?.ToString();
+                    TxtV2Max.Text = limits.V2Max?.ToString();
+                }
+                else
+                {
+                    ClearLimitsFields();
+                }
             }
             else
             {
-                TxtT1Min.Text = ""; TxtT1Max.Text = "";
-                TxtT2Min.Text = ""; TxtT2Max.Text = "";
-                TxtP1Min.Text = ""; TxtP1Max.Text = "";
-                TxtP2Min.Text = ""; TxtP2Max.Text = "";
-                TxtV1Min.Text = ""; TxtV1Max.Text = "";
-                TxtV2Min.Text = ""; TxtV2Max.Text = "";
+                TxtLimitsTitle.Text = $"Групповая настройка ({_editingPoints.Count} точек)";
+                TxtLimitsSubtitle.Text = "Заполните только те поля, которые хотите применить ко всем выбранным";
+                ClearLimitsFields();
             }
 
             OverlayLimits.Visibility = Visibility.Visible;
         }
 
+        private void ClearLimitsFields()
+        {
+            TxtT1Min.Text = ""; TxtT1Max.Text = "";
+            TxtT2Min.Text = ""; TxtT2Max.Text = "";
+            TxtP1Min.Text = ""; TxtP1Max.Text = "";
+            TxtP2Min.Text = ""; TxtP2Max.Text = "";
+            TxtV1Min.Text = ""; TxtV1Max.Text = "";
+            TxtV2Min.Text = ""; TxtV2Max.Text = "";
+        }
+
         private void BtnCancelLimits_Click(object sender, RoutedEventArgs e)
         {
             OverlayLimits.Visibility = Visibility.Collapsed;
-            _editingPoint = null;
+            _editingPoints.Clear();
         }
 
         private void BtnSaveLimits_Click(object sender, RoutedEventArgs e)
         {
-            if (_editingPoint == null) return;
+            if (!_editingPoints.Any()) return;
 
-            var limits = new PointThresholds();
-            limits.T1Min = ParseDouble(TxtT1Min.Text);
-            limits.T1Max = ParseDouble(TxtT1Max.Text);
-            limits.T2Min = ParseDouble(TxtT2Min.Text);
-            limits.T2Max = ParseDouble(TxtT2Max.Text);
-            limits.P1Min = ParseDouble(TxtP1Min.Text);
-            limits.P1Max = ParseDouble(TxtP1Max.Text);
-            limits.P2Min = ParseDouble(TxtP2Min.Text);
-            limits.P2Max = ParseDouble(TxtP2Max.Text);
-            limits.V1Min = ParseDouble(TxtV1Min.Text);
-            limits.V1Max = ParseDouble(TxtV1Max.Text);
-            limits.V2Min = ParseDouble(TxtV2Min.Text);
-            limits.V2Max = ParseDouble(TxtV2Max.Text);
+            var t1Min = ParseDouble(TxtT1Min.Text);
+            var t1Max = ParseDouble(TxtT1Max.Text);
+            var t2Min = ParseDouble(TxtT2Min.Text);
+            var t2Max = ParseDouble(TxtT2Max.Text);
+            var p1Min = ParseDouble(TxtP1Min.Text);
+            var p1Max = ParseDouble(TxtP1Max.Text);
+            var p2Min = ParseDouble(TxtP2Min.Text);
+            var p2Max = ParseDouble(TxtP2Max.Text);
+            var v1Min = ParseDouble(TxtV1Min.Text);
+            var v1Max = ParseDouble(TxtV1Max.Text);
+            var v2Min = ParseDouble(TxtV2Min.Text);
+            var v2Max = ParseDouble(TxtV2Max.Text);
 
-            _settings.PointLimits[_editingPoint.Id] = limits;
-            SaveUserSettings();
-
-            var vm = _results.FirstOrDefault(r => r.Id == _editingPoint.Id);
-            if (vm != null)
+            foreach (var point in _editingPoints)
             {
-                vm.Limits = limits;
-                vm.RefreshColors();
+                if (!_settings.PointLimits.TryGetValue(point.Id, out var limits))
+                {
+                    limits = new PointThresholds();
+                    _settings.PointLimits[point.Id] = limits;
+                }
+
+                if (!string.IsNullOrWhiteSpace(TxtT1Min.Text)) limits.T1Min = t1Min;
+                if (!string.IsNullOrWhiteSpace(TxtT1Max.Text)) limits.T1Max = t1Max;
+                if (!string.IsNullOrWhiteSpace(TxtT2Min.Text)) limits.T2Min = t2Min;
+                if (!string.IsNullOrWhiteSpace(TxtT2Max.Text)) limits.T2Max = t2Max;
+                if (!string.IsNullOrWhiteSpace(TxtP1Min.Text)) limits.P1Min = p1Min;
+                if (!string.IsNullOrWhiteSpace(TxtP1Max.Text)) limits.P1Max = p1Max;
+                if (!string.IsNullOrWhiteSpace(TxtP2Min.Text)) limits.P2Min = p2Min;
+                if (!string.IsNullOrWhiteSpace(TxtP2Max.Text)) limits.P2Max = p2Max;
+                if (!string.IsNullOrWhiteSpace(TxtV1Min.Text)) limits.V1Min = v1Min;
+                if (!string.IsNullOrWhiteSpace(TxtV1Max.Text)) limits.V1Max = v1Max;
+                if (!string.IsNullOrWhiteSpace(TxtV2Min.Text)) limits.V2Min = v2Min;
+                if (!string.IsNullOrWhiteSpace(TxtV2Max.Text)) limits.V2Max = v2Max;
+
+                var vm = _results.FirstOrDefault(r => r.Id == point.Id);
+                if (vm != null)
+                {
+                    vm.Limits = limits;
+                    vm.RefreshColors();
+                }
             }
 
+            SaveUserSettings();
             OverlayLimits.Visibility = Visibility.Collapsed;
-            _editingPoint = null;
+            _editingPoints.Clear();
         }
 
         private double? ParseDouble(string text)
@@ -461,6 +517,132 @@ namespace LersMonitor
             return null;
         }
 
+        // --- МОНИТОРИНГ ТЕКУЩИХ (НАТИВНЫЙ РЕЖИМ ЛЭРС) ---
+        private async void BtnStartTrend_Click(object sender, RoutedEventArgs e)
+        {
+            if (CmbTrendPoint.SelectedItem is not MeasurePointItem selectedPoint)
+            {
+                MessageBox.Show("Выберите точку для мониторинга.", "Внимание", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            _activeTrendPointId = selectedPoint.Id;
+            _trendCts = new CancellationTokenSource();
+            var token = _trendCts.Token;
+
+            BtnStartTrend.Visibility = Visibility.Collapsed;
+            BtnStopTrend.Visibility = Visibility.Visible;
+            CmbTrendPoint.IsEnabled = false;
+
+            _settings.PointLimits.TryGetValue(selectedPoint.Id, out var limits);
+
+            TxtStatus.Text = $"Запуск штатного мониторинга текущих для {selectedPoint.Title}...";
+
+            try
+            {
+                // Запускаем непрерывный мониторинг текущих на сервере ЛЭРС (без once=true)
+                try
+                {
+                    var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{selectedPoint.Id}/Currents");
+                    pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
+                    pollReq.Content.Headers.ContentLength = 0;
+                    await _http.SendAsync(pollReq, token);
+                }
+                catch { }
+
+                DateTime? lastObservedTime = null;
+
+                // Периодически считываем новые данные, которые ЛЭРС записывает каждые ~15 сек
+                while (!token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{selectedPoint.Id}/Consumption/Last", token);
+                        if (res.IsSuccessStatusCode)
+                        {
+                            var json = await res.Content.ReadAsStringAsync(token);
+                            if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                            {
+                                using var doc = JsonDocument.Parse(json);
+                                var root = doc.RootElement;
+                                var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date") ?? DateTime.Now;
+
+                                // Если время записи изменилось — добавляем строку в историю
+                                if (lastObservedTime == null || timeNow > lastObservedTime)
+                                {
+                                    lastObservedTime = timeNow;
+
+                                    var row = new PointResultViewModel
+                                    {
+                                        Id = selectedPoint.Id,
+                                        Title = selectedPoint.Title,
+                                        NodeTitle = selectedPoint.NodeTitle,
+                                        DeviceTime = timeNow,
+                                        Limits = limits,
+                                        T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply"),
+                                        T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return"),
+                                        P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply"),
+                                        P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return"),
+                                        V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply"),
+                                        V2 = ExtractParameterValue(root, "v_out", "v2", "volume2", "V2", "V_out", "volume_return"),
+                                        M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply"),
+                                        M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return"),
+                                        Q  = ExtractParameterValue(root, "q", "heat", "energy", "Q", "Q_in", "q_total"),
+                                        Status = "Снято"
+                                    };
+
+                                    _trendHistory.Insert(0, row);
+                                    row.RefreshColors();
+                                    TxtStatus.Text = $"Получены данные: {timeNow:HH:mm:ss}";
+                                }
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch { }
+
+                    // Проверка базы каждые 3 секунды
+                    await Task.Delay(3000, token);
+                }
+            }
+            catch (OperationCanceledException) { }
+            finally
+            {
+                StopNativeLersTrend();
+                BtnStartTrend.Visibility = Visibility.Visible;
+                BtnStopTrend.Visibility = Visibility.Collapsed;
+                CmbTrendPoint.IsEnabled = true;
+                TxtStatus.Text = "Мониторинг точки остановлен.";
+            }
+        }
+
+        private void StopNativeLersTrend()
+        {
+            _trendCts?.Cancel();
+            if (_activeTrendPointId > 0 && !string.IsNullOrEmpty(_baseUrl))
+            {
+                try
+                {
+                    // Останавливаем сессию опроса в ЛЭРС
+                    var stopReq = new HttpRequestMessage(HttpMethod.Delete, $"{_baseUrl}/Poll/MeasurePoints/{_activeTrendPointId}/Currents");
+                    _http.SendAsync(stopReq);
+                }
+                catch { }
+                _activeTrendPointId = 0;
+            }
+        }
+
+        private void BtnStopTrend_Click(object sender, RoutedEventArgs e)
+        {
+            StopNativeLersTrend();
+        }
+
+        private void BtnClearTrend_Click(object sender, RoutedEventArgs e)
+        {
+            _trendHistory.Clear();
+        }
+
+        // --- ОБЩИЙ ОПРОС ВЫБРАННЫХ ТОЧЕК ---
         private async void BtnStartMonitor_Click(object sender, RoutedEventArgs e)
         {
             var selectedPoints = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
@@ -491,7 +673,6 @@ namespace LersMonitor
                 BtnStartMonitor.IsEnabled = false;
                 TxtStatus.Text = "Запуск опроса приборов...";
 
-                // Группируем точки по объектам, чтобы слать запрос опроса ровно 1 раз на каждый объект
                 var pointsByNode = selectedPoints.GroupBy(p => p.NodeTitle).ToList();
 
                 await Task.WhenAll(pointsByNode.Select(async group =>
@@ -512,7 +693,6 @@ namespace LersMonitor
                 const int maxChecks = 25;
                 const int checkIntervalMs = 3000;
 
-                // Умный опрос: как только сервер возвращает любые актуальные данные, точка сразу фиксирует успех
                 var pollingTasks = selectedPoints.Select(async p =>
                 {
                     var vm = _results.FirstOrDefault(r => r.Id == p.Id);
@@ -554,7 +734,6 @@ namespace LersMonitor
                                     
                                     vm.Q  = ExtractParameterValue(root, "q", "heat", "energy", "Q", "Q_in", "q_total");
 
-                                    // Если параметры успешно прочитались или пришло время прибора — сразу завершаем ожидание!
                                     if (vm.T1 != null || vm.V1 != null || vm.P1 != null || vm.T2 != null || timeNow != null)
                                     {
                                         vm.Status = "Опрошено успешно";
@@ -717,15 +896,10 @@ namespace LersMonitor
         private Brush GetColor(double? val, double? min, double? max)
         {
             var defaultColor = Application.Current.MainWindow?.TryFindResource("LabelPrimary") as Brush ?? Brushes.Black;
-            if (val == null) return defaultCardColor(); // Использование цвета текста
+            if (val == null) return defaultColor;
             if (min.HasValue && val.Value < min.Value) return Brushes.Red;
             if (max.HasValue && val.Value > max.Value) return Brushes.Red;
             return defaultColor;
-        }
-
-        private Brush defaultCardColor()
-        {
-            return Application.Current.MainWindow?.TryFindResource("LabelPrimary") as Brush ?? Brushes.Black;
         }
 
         private int _id;
@@ -780,7 +954,7 @@ namespace LersMonitor
         public double? M2 { get => _m2; set { _m2 = value; OnPropertyChanged(); } }
         
         private double? _q;
-        public double? Q { get => _q; set { _m2 = value; OnPropertyChanged(); } } // Fixed property assignment protection
+        public double? Q { get => _q; set { _q = value; OnPropertyChanged(); } }
         
         private string _status = string.Empty;
         public string Status { get => _status; set { _status = value; OnPropertyChanged(); } }
