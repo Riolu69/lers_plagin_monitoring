@@ -525,6 +525,20 @@ namespace LersMonitor
             return null;
         }
 
+        private void UpdatePointValues(PointResultViewModel vm, JsonElement root)
+        {
+            vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
+            vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
+            vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
+            vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
+            vm.P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return");
+            vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
+            vm.V2 = ExtractParameterValue(root, "v_out", "v2", "volume2", "V2", "V_out", "volume_return");
+            vm.M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply");
+            vm.M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return");
+            vm.Q  = ExtractParameterValue(root, "q_delta", "q", "q_in", "q_out", "q_gvs", "Q_delta", "Q_in", "Q_out", "Q", "heat", "heatEnergy", "thermalEnergy", "q_total", "heatPower", "q1", "q2");
+        }
+
         // --- МОНИТОРИНГ ТЕКУЩИХ (НАТИВНЫЙ РЕЖИМ ЛЭРС) ---
         private async void BtnStartTrend_Click(object sender, RoutedEventArgs e)
         {
@@ -594,18 +608,10 @@ namespace LersMonitor
                                         NodeTitle = selectedPoint.NodeTitle,
                                         DeviceTime = timeNow,
                                         Limits = limits,
-                                        T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply"),
-                                        T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return"),
-                                        T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value"),
-                                        P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply"),
-                                        P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return"),
-                                        V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply"),
-                                        V2 = ExtractParameterValue(root, "v_out", "v2", "volume2", "V2", "V_out", "volume_return"),
-                                        M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply"),
-                                        M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return"),
-                                        Q  = ExtractParameterValue(root, "q_delta", "q", "q_in", "q_out", "q_gvs", "Q_delta", "Q_in", "Q_out", "Q", "heat", "heatEnergy", "thermalEnergy", "q_total", "heatPower", "q1", "q2"),
                                         Status = "Снято"
                                     };
+                                    
+                                    UpdatePointValues(row, root);
 
                                     _trendHistory.Insert(0, row);
                                     row.RefreshColors();
@@ -666,7 +672,21 @@ namespace LersMonitor
             TxtStatus.Text = "Опрос отменен пользователем.";
         }
 
-        // --- ОБЩИЙ ОПРОС ВЫБРАННЫХ ТОЧЕК ---
+        // --- УМНЫЙ ОБЩИЙ ОПРОС ВЫБРАННЫХ ТОЧЕК (С АВТО-ОЧЕРЕДЬЮ) ---
+        private static string ParseLersError(string jsonResponse, int statusCode)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(jsonResponse)) return $"Отказ ({statusCode})";
+                using var doc = JsonDocument.Parse(jsonResponse);
+                if (doc.RootElement.TryGetProperty("errorDescription", out var desc)) return desc.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("errorMessage", out var msg)) return msg.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("message", out var m)) return m.GetString() ?? "";
+            }
+            catch { }
+            return $"Отказ ({statusCode})";
+        }
+
         private async void BtnStartMonitor_Click(object sender, RoutedEventArgs e)
         {
             var selectedPoints = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
@@ -720,44 +740,60 @@ namespace LersMonitor
                     catch { }
                 }));
 
-                TxtStatus.Text = "Запуск опроса оборудования...";
+                TxtStatus.Text = "Запуск интеллектуальной очереди опроса...";
 
-                // Отправляем команду опроса на КАЖДУЮ точку индивидуально, с небольшой задержкой (чтобы сервер успевал ставить в очередь)
-                foreach (var p in selectedPoints)
-                {
-                    if (token.IsCancellationRequested) break;
-                    try
-                    {
-                        var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{p.Id}/Currents?once=true");
-                        pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
-                        pollReq.Content.Headers.ContentLength = 0;
-                        await _http.SendAsync(pollReq, token);
-                    }
-                    catch { }
-                    await Task.Delay(100, token);
-                }
-
-                TxtStatus.Text = "Опрос запущен, ожидание обновления...";
-
-                const int maxChecks = 25;
+                const int maxChecks = 100; // Увеличенный таймаут до 5 минут для длинных очередей
                 const int checkIntervalMs = 3000;
 
-                // Запускаем независимую проверку обновления ДЛЯ КАЖДОЙ ТОЧКИ
+                // Запускаем алгоритм автоматической очереди для каждой точки
                 var pollingTasks = selectedPoints.Select(async pt =>
                 {
                     var vm = _results.FirstOrDefault(r => r.Id == pt.Id);
                     if (vm == null) return;
 
                     initialTimes.TryGetValue(pt.Id, out var timeBefore);
+                    bool pollStarted = false;
                     bool pointFinished = false;
 
                     for (int attempt = 1; attempt <= maxChecks; attempt++)
                     {
                         if (token.IsCancellationRequested) break;
-                        
-                        vm.Status = $"Опрос ({attempt}/{maxChecks})...";
+
+                        // Если опрос ещё не запущен, пробуем отправить команду на запуск
+                        if (!pollStarted)
+                        {
+                            try
+                            {
+                                var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{pt.Id}/Currents?once=true");
+                                pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
+                                var pollRes = await _http.SendAsync(pollReq, token);
+
+                                if (pollRes.IsSuccessStatusCode)
+                                {
+                                    pollStarted = true;
+                                    vm.Status = $"Опрос запущен ({attempt}/{maxChecks})...";
+                                }
+                                else
+                                {
+                                    // Порт занят другой точкой, встаем в режим ожидания (попробуем снова на следующей итерации)
+                                    string errStr = await pollRes.Content.ReadAsStringAsync(token);
+                                    string errMsg = ParseLersError(errStr, (int)pollRes.StatusCode);
+                                    vm.Status = $"В очереди: {errMsg} [{attempt}/{maxChecks}]";
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                vm.Status = $"Сбой запуска [{attempt}/{maxChecks}]";
+                            }
+                        }
+                        else
+                        {
+                            vm.Status = $"Ожидание ответа прибора ({attempt}/{maxChecks})...";
+                        }
+
                         await Task.Delay(checkIntervalMs, token);
 
+                        // Проверяем наличие новых данных (даже если мы ещё в очереди, данные могли обновиться от соседней точки!)
                         try
                         {
                             var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{pt.Id}/Consumption/Last", token);
@@ -770,25 +806,17 @@ namespace LersMonitor
                                     var root = doc.RootElement.Clone();
                                     var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
 
-                                    // Проверяем, действительно ли получены новые данные ИМЕННО ДЛЯ ЭТОЙ ТОЧКИ
-                                    if (timeNow != null && (timeBefore == null || timeNow > timeBefore))
+                                    bool isNew = (timeBefore == null && timeNow != null) || 
+                                                 (timeNow != null && timeBefore != null && timeNow > timeBefore);
+
+                                    if (isNew)
                                     {
                                         vm.DeviceTime = timeNow;
-                                        vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
-                                        vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
-                                        vm.T3 = ExtractParameterValue(root, "t3", "temperature3", "T3", "t3Value");
-                                        vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
-                                        vm.P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return");
-                                        vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
-                                        vm.V2 = ExtractParameterValue(root, "v_out", "v2", "volume2", "V2", "V_out", "volume_return");
-                                        vm.M1 = ExtractParameterValue(root, "m_in", "m1", "mass1", "M1", "M_in", "mass_supply");
-                                        vm.M2 = ExtractParameterValue(root, "m_out", "m2", "mass2", "M2", "M_out", "mass_return");
-                                        vm.Q  = ExtractParameterValue(root, "q_delta", "q", "q_in", "q_out", "q_gvs", "Q_delta", "Q_in", "Q_out", "Q", "heat", "heatEnergy", "thermalEnergy", "q_total", "heatPower", "q1", "q2");
-                                        
+                                        UpdatePointValues(vm, root);
                                         vm.RefreshColors();
                                         vm.Status = "Опрошено успешно";
                                         pointFinished = true;
-                                        break;
+                                        break; // Выходим из цикла — данные успешно получены!
                                     }
                                 }
                             }
@@ -796,31 +824,28 @@ namespace LersMonitor
                         catch { }
                     }
 
-                    // Если цикл завершился, а новых данных так и нет
+                    // Если 100 итераций прошло, а данных так и нет
                     if (!pointFinished && !token.IsCancellationRequested)
                     {
-                        // Подгружаем старые данные для отображения
                         try
                         {
-                            var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{pt.Id}/Consumption/Last");
+                            var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{pt.Id}/Consumption/Last", token);
                             if (res.IsSuccessStatusCode)
                             {
-                                var json = await res.Content.ReadAsStringAsync();
+                                var json = await res.Content.ReadAsStringAsync(token);
                                 if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
                                 {
                                     using var doc = JsonDocument.Parse(json);
                                     var root = doc.RootElement;
                                     vm.DeviceTime = TryGetDate(root, "dateTime", "deviceTime", "date");
-                                    vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
-                                    vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
-                                    vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
-                                    vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
+                                    UpdatePointValues(vm, root);
                                     vm.RefreshColors();
                                 }
                             }
                         }
                         catch { }
-                        vm.Status = "Таймаут (данные не обновились)";
+
+                        vm.Status = pollStarted ? "Таймаут прибора (нет ответа)" : "Не дождался очереди (порт занят)";
                     }
                 });
 
@@ -833,7 +858,7 @@ namespace LersMonitor
             catch (OperationCanceledException)
             {
                 TxtStatus.Text = "Опрос отменен.";
-                foreach (var r in _results.Where(x => x.Status.StartsWith("Опрос")))
+                foreach (var r in _results.Where(x => x.Status.StartsWith("Опрос") || x.Status.StartsWith("В очереди")))
                     r.Status = "Отменено";
             }
             catch (Exception ex)
