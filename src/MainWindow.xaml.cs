@@ -684,7 +684,36 @@ namespace LersMonitor
             return $"Отказ ({statusCode})";
         }
 
-        // --- УМНЫЙ ОБЩИЙ ОПРОС ВЫБРАННЫХ ТОЧЕК (С ПОСЛЕДОВАТЕЛЬНОЙ ОЧЕРЕДЬЮ) ---
+        // Вспомогательный метод для загрузки и обновления значений точки
+        private async Task<(bool isNew, DateTime? timeNow)> TryFetchAndUpdateAsync(PointResultViewModel vm, DateTime? timeBefore, CancellationToken token)
+        {
+            try
+            {
+                var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{vm.Id}/Consumption/Last", token);
+                if (res.IsSuccessStatusCode)
+                {
+                    var json = await res.Content.ReadAsStringAsync(token);
+                    if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                    {
+                        using var doc = JsonDocument.Parse(json);
+                        var root = doc.RootElement;
+                        var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
+
+                        bool isNew = timeNow != null && (timeBefore == null || timeNow > timeBefore);
+
+                        vm.DeviceTime = timeNow;
+                        UpdatePointValues(vm, root);
+                        vm.RefreshColors();
+
+                        return (isNew, timeNow);
+                    }
+                }
+            }
+            catch { }
+            return (false, null);
+        }
+
+        // --- УМНЫЙ ОБЩИЙ ОПРОС ВЫБРАННЫХ ТОЧЕК (ДИНАМИЧЕСКИЙ) ---
         private async void BtnStartMonitor_Click(object sender, RoutedEventArgs e)
         {
             var selectedPoints = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
@@ -738,56 +767,42 @@ namespace LersMonitor
                     catch { }
                 }));
 
-                TxtStatus.Text = "Запуск интеллектуальной очереди опроса...";
+                TxtStatus.Text = "Запуск интеллектуального опроса...";
 
-                // Группируем точки по объекту (узлу)
-                var groups = selectedPoints.GroupBy(p => p.NodeTitle).ToList();
+                const int maxChecks = 100; // Увеличенный таймаут до 5 минут 
+                const int checkIntervalMs = 3000;
+                var rnd = new Random();
 
-                // Опрашиваем каждый узел параллельно, но точки внутри узла — строго по очереди!
-                var pollingTasks = groups.Select(async grp =>
+                // Опрашиваем ВСЕ точки независимыми параллельными задачами. Без группировки по имени объекта!
+                var pollingTasks = selectedPoints.Select(async pt =>
                 {
-                    foreach (var pt in grp)
+                    var vm = _results.FirstOrDefault(r => r.Id == pt.Id);
+                    if (vm == null) return;
+
+                    initialTimes.TryGetValue(pt.Id, out var timeBefore);
+                    bool pollStarted = false;
+                    bool pointFinished = false;
+                    string lastError = "";
+
+                    // Слегка размазываем старт по времени, чтобы не заДДОСить сервер тысячей TCP соединений разом
+                    await Task.Delay(rnd.Next(50, 500), token);
+
+                    for (int attempt = 1; attempt <= maxChecks; attempt++)
                     {
                         if (token.IsCancellationRequested) break;
 
-                        var vm = _results.FirstOrDefault(r => r.Id == pt.Id);
-                        if (vm == null) continue;
-
-                        initialTimes.TryGetValue(pt.Id, out var timeBefore);
-
-                        // 1. Пре-чек: а вдруг предыдущая точка уже обновила эти данные?
-                        bool preCheckSuccess = false;
-                        try
+                        // 1. Проверяем БД — вдруг данные уже обновились (опросились попутно соседним потоком/точкой)
+                        var (isNew, tNow) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
+                        if (isNew)
                         {
-                            var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{pt.Id}/Consumption/Last", token);
-                            if (res.IsSuccessStatusCode)
-                            {
-                                var json = await res.Content.ReadAsStringAsync(token);
-                                if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
-                                {
-                                    using var doc = JsonDocument.Parse(json);
-                                    var timeNow = TryGetDate(doc.RootElement, "dateTime", "deviceTime", "date");
-                                    if (timeNow != null && (timeBefore == null || timeNow > timeBefore))
-                                    {
-                                        vm.DeviceTime = timeNow;
-                                        UpdatePointValues(vm, doc.RootElement);
-                                        vm.RefreshColors();
-                                        vm.Status = "Опрошено попутно (успешно)";
-                                        preCheckSuccess = true;
-                                    }
-                                }
-                            }
+                            vm.Status = pollStarted ? "Опрошено успешно" : "Опрошено попутно (успешно)";
+                            pointFinished = true;
+                            break;
                         }
-                        catch { }
 
-                        // Если данные уже свежие, пропускаем эту точку и идём к следующей!
-                        if (preCheckSuccess) continue; 
-
-                        // 2. Если данные старые, дозваниваемся до прибора ИМЕННО ДЛЯ ЭТОЙ ТОЧКИ
-                        bool pollStarted = false;
-                        for (int r = 1; r <= 20; r++) // 20 попыток занять порт (~1 минута ожидания)
+                        // 2. Если данные старые, пробуем занять порт 
+                        if (!pollStarted)
                         {
-                            if (token.IsCancellationRequested) break;
                             try
                             {
                                 var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{pt.Id}/Currents?once=true");
@@ -797,80 +812,48 @@ namespace LersMonitor
                                 if (pollRes.IsSuccessStatusCode)
                                 {
                                     pollStarted = true;
-                                    break;
+                                    vm.Status = $"Идёт опрос прибора ({attempt}/{maxChecks})...";
+                                }
+                                else if ((int)pollRes.StatusCode == 422)
+                                {
+                                    string errStr = await pollRes.Content.ReadAsStringAsync(token);
+                                    lastError = ParseLersError(errStr, 422);
+                                    vm.Status = $"В очереди: {lastError} [{attempt}/{maxChecks}]";
+                                    // Порт физически занят (этой же котельной или другим модемом). 
+                                    // Мы не сдаёмся! Ждём 3 секунды и на следующей итерации цикла снова попытаемся.
                                 }
                                 else
                                 {
                                     string errStr = await pollRes.Content.ReadAsStringAsync(token);
-                                    string errMsg = ParseLersError(errStr, (int)pollRes.StatusCode);
-                                    vm.Status = $"В очереди: {errMsg} [{r}/20]";
+                                    lastError = ParseLersError(errStr, (int)pollRes.StatusCode);
+                                    vm.Status = $"Ошибка запуска: {lastError} [{attempt}/{maxChecks}]";
                                 }
                             }
-                            catch { }
-                            await Task.Delay(3000, token);
-                        }
-
-                        if (!pollStarted && !token.IsCancellationRequested)
-                        {
-                            vm.Status = "Не удалось занять порт (таймаут)";
-                            continue; // Переходим к следующей точке, эту пропускаем
-                        }
-
-                        // 3. Порт заняли! Ждём, когда прибор отдаст данные (25 проверок)
-                        bool pointFinished = false;
-                        for (int attempt = 1; attempt <= 25; attempt++)
-                        {
-                            if (token.IsCancellationRequested) break;
-                            vm.Status = $"Идёт опрос прибора ({attempt}/25)...";
-                            await Task.Delay(3000, token);
-
-                            try
+                            catch (Exception ex)
                             {
-                                var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{pt.Id}/Consumption/Last", token);
-                                if (res.IsSuccessStatusCode)
-                                {
-                                    var json = await res.Content.ReadAsStringAsync(token);
-                                    if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
-                                    {
-                                        using var doc = JsonDocument.Parse(json);
-                                        var root = doc.RootElement.Clone();
-                                        var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
-
-                                        if (timeNow != null && (timeBefore == null || timeNow > timeBefore))
-                                        {
-                                            vm.DeviceTime = timeNow;
-                                            UpdatePointValues(vm, root);
-                                            vm.RefreshColors();
-                                            vm.Status = "Опрошено успешно";
-                                            pointFinished = true;
-                                            break;
-                                        }
-                                    }
-                                }
+                                lastError = "Сбой сети";
+                                vm.Status = $"В очереди (нет связи с ЛЭРС) [{attempt}/{maxChecks}]";
                             }
-                            catch { }
+                        }
+                        else
+                        {
+                            vm.Status = $"Идёт опрос прибора ({attempt}/{maxChecks})...";
                         }
 
-                        // Если опрос завершился, а данные так и не обновились
-                        if (!pointFinished && !token.IsCancellationRequested)
+                        await Task.Delay(checkIntervalMs, token);
+                    }
+
+                    // Если 100 итераций прошло, а данных так и нет
+                    if (!pointFinished && !token.IsCancellationRequested)
+                    {
+                        var (isNewEnd, tEnd) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
+                        if (isNewEnd)
                         {
-                            try
-                            {
-                                var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{pt.Id}/Consumption/Last", token);
-                                if (res.IsSuccessStatusCode)
-                                {
-                                    var json = await res.Content.ReadAsStringAsync(token);
-                                    if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
-                                    {
-                                        using var doc = JsonDocument.Parse(json);
-                                        vm.DeviceTime = TryGetDate(doc.RootElement, "dateTime", "deviceTime", "date");
-                                        UpdatePointValues(vm, doc.RootElement);
-                                        vm.RefreshColors();
-                                    }
-                                }
-                            }
-                            catch { }
-                            vm.Status = "Таймаут (данные не обновились)";
+                            vm.Status = "Опрошено успешно";
+                        }
+                        else
+                        {
+                            vm.Status = pollStarted ? "Таймаут (прибор не ответил)" : $"Отказ очереди: {lastError}";
                         }
                     }
                 });
@@ -884,7 +867,7 @@ namespace LersMonitor
             catch (OperationCanceledException)
             {
                 TxtStatus.Text = "Опрос отменен.";
-                foreach (var r in _results.Where(x => x.Status.StartsWith("Опрос") || x.Status.StartsWith("В очереди") || x.Status.StartsWith("Идёт")))
+                foreach (var r in _results.Where(x => !x.Status.Contains("успешно")))
                     r.Status = "Отменено";
             }
             catch (Exception ex)
