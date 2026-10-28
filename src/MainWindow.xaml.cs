@@ -29,11 +29,13 @@ namespace LersMonitor
         private List<MeasurePointItem> _allPoints = new();
         private readonly ObservableCollection<PointResultViewModel> _results = new();
         private readonly ObservableCollection<PointResultViewModel> _trendHistory = new();
+        private readonly ObservableCollection<PointResultViewModel> _dashboardResults = new();
         private UserSettings _settings = new();
         
         private List<MeasurePointItem> _editingPoints = new();
         private CancellationTokenSource? _generalMonitorCts;
         private CancellationTokenSource? _trendCts;
+        private CancellationTokenSource? _dashboardCts;
         private int _activeTrendPointId = 0;
 
         private static string SettingsFilePath =>
@@ -44,9 +46,13 @@ namespace LersMonitor
             InitializeComponent();
             GridResults.ItemsSource = _results;
             GridTrend.ItemsSource = _trendHistory;
+            ItemsDashboard.ItemsSource = _dashboardResults;
             
             CmbTrendDuration.ItemsSource = Enumerable.Range(1, 10).ToList();
             CmbTrendDuration.SelectedItem = 3;
+
+            CmbDashboardInterval.ItemsSource = new List<int> { 5, 10, 15, 20, 30, 60 };
+            CmbDashboardInterval.SelectedItem = 10;
 
             LoadUserSettings();
         }
@@ -138,6 +144,7 @@ namespace LersMonitor
         protected override void OnClosed(EventArgs e)
         {
             _generalMonitorCts?.Cancel();
+            _dashboardCts?.Cancel();
             StopNativeLersTrend();
             SaveUserSettings();
             base.OnClosed(e);
@@ -145,18 +152,15 @@ namespace LersMonitor
 
         private void TabMode_Checked(object sender, RoutedEventArgs e)
         {
-            if (ViewGeneral == null || ViewTrend == null) return;
+            if (ViewGeneral == null || ViewTrend == null || ViewDashboard == null) return;
 
-            if (TabAll.IsChecked == true)
-            {
-                ViewGeneral.Visibility = Visibility.Visible;
-                ViewTrend.Visibility = Visibility.Collapsed;
-            }
-            else
-            {
-                ViewGeneral.Visibility = Visibility.Collapsed;
-                ViewTrend.Visibility = Visibility.Visible;
-            }
+            ViewGeneral.Visibility = Visibility.Collapsed;
+            ViewTrend.Visibility = Visibility.Collapsed;
+            ViewDashboard.Visibility = Visibility.Collapsed;
+
+            if (TabAll.IsChecked == true) ViewGeneral.Visibility = Visibility.Visible;
+            else if (TabSingle.IsChecked == true) ViewTrend.Visibility = Visibility.Visible;
+            else if (TabDashboard.IsChecked == true) ViewDashboard.Visibility = Visibility.Visible;
         }
 
         private void ChkDarkMode_Click(object sender, RoutedEventArgs e)
@@ -168,6 +172,7 @@ namespace LersMonitor
             
             foreach (var r in _results) r.RefreshColors();
             foreach (var r in _trendHistory) r.RefreshColors();
+            foreach (var r in _dashboardResults) r.RefreshColors();
         }
 
         private void ApplyTheme(bool isDark)
@@ -219,13 +224,7 @@ namespace LersMonitor
 
                 _baseUrl = $"http://{host}:{port}/api/v1";
 
-                var loginPayload = JsonSerializer.Serialize(new 
-                { 
-                    login = login, 
-                    password = password,
-                    application = "LersMonitor WPF"
-                });
-
+                var loginPayload = JsonSerializer.Serialize(new { login, password, application = "LersMonitor WPF" });
                 var loginContent = new StringContent(loginPayload, Encoding.UTF8, "application/json");
                 _http.DefaultRequestHeaders.Accept.Clear();
                 _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -238,16 +237,12 @@ namespace LersMonitor
 
                 using (var doc = JsonDocument.Parse(loginResponseJson))
                 {
-                    if (doc.RootElement.TryGetProperty("token", out var tokenProp))
-                        _token = tokenProp.GetString();
-                    else
-                        _token = loginResponseJson.Trim('"');
+                    if (doc.RootElement.TryGetProperty("token", out var tokenProp)) _token = tokenProp.GetString();
+                    else _token = loginResponseJson.Trim('"');
                 }
 
                 _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _token);
-
                 SaveUserSettings();
-
                 TxtStatus.Text = "Загрузка объектов и точек учёта...";
 
                 var nodeTitlesById = new Dictionary<int, string>();
@@ -258,19 +253,12 @@ namespace LersMonitor
                     {
                         var nodesJson = await nodesRes.Content.ReadAsStringAsync();
                         using var nDoc = JsonDocument.Parse(nodesJson);
-                        
-                        JsonElement nodesArr = nDoc.RootElement.ValueKind == JsonValueKind.Array 
-                            ? nDoc.RootElement 
-                            : (nDoc.RootElement.TryGetProperty("nodes", out var nProp) ? nProp : nDoc.RootElement);
-
+                        JsonElement nodesArr = nDoc.RootElement.ValueKind == JsonValueKind.Array ? nDoc.RootElement : (nDoc.RootElement.TryGetProperty("nodes", out var nProp) ? nProp : nDoc.RootElement);
                         foreach (var node in nodesArr.EnumerateArray())
                         {
                             int id = node.TryGetProperty("id", out var idElem) ? idElem.GetInt32() : 0;
                             string title = node.TryGetProperty("title", out var titleElem) ? titleElem.GetString() ?? "" : "";
-                            if (id > 0 && !string.IsNullOrEmpty(title))
-                            {
-                                nodeTitlesById[id] = title;
-                            }
+                            if (id > 0 && !string.IsNullOrEmpty(title)) nodeTitlesById[id] = title;
                         }
                     }
                 }
@@ -284,37 +272,20 @@ namespace LersMonitor
                 
                 using (var pDoc = JsonDocument.Parse(pointsJson))
                 {
-                    JsonElement arrayElement = pDoc.RootElement.ValueKind == JsonValueKind.Array
-                        ? pDoc.RootElement
-                        : (pDoc.RootElement.TryGetProperty("measurePoints", out var mProp) ? mProp : pDoc.RootElement);
-
+                    JsonElement arrayElement = pDoc.RootElement.ValueKind == JsonValueKind.Array ? pDoc.RootElement : (pDoc.RootElement.TryGetProperty("measurePoints", out var mProp) ? mProp : pDoc.RootElement);
                     foreach (var item in arrayElement.EnumerateArray())
                     {
                         int id = item.TryGetProperty("id", out var idElem) ? idElem.GetInt32() : 0;
                         string pointTitle = item.TryGetProperty("title", out var titleElem) ? titleElem.GetString() ?? "" : "Точка";
-                        
-                        int nodeId = 0;
-                        if (item.TryGetProperty("nodeId", out var nodeIdElem))
-                            nodeId = nodeIdElem.GetInt32();
+                        int nodeId = item.TryGetProperty("nodeId", out var nodeIdElem) ? nodeIdElem.GetInt32() : 0;
+                        string nodeTitle = item.TryGetProperty("nodeTitle", out var nodeTitleElem) ? nodeTitleElem.GetString() ?? "" : "";
 
-                        string nodeTitle = "";
-                        if (item.TryGetProperty("nodeTitle", out var nodeTitleElem))
-                            nodeTitle = nodeTitleElem.GetString() ?? "";
-
-                        if (string.IsNullOrEmpty(nodeTitle) && nodeId > 0 && nodeTitlesById.ContainsKey(nodeId))
-                            nodeTitle = nodeTitlesById[nodeId];
-
-                        if (string.IsNullOrEmpty(nodeTitle))
-                            nodeTitle = "Объект";
+                        if (string.IsNullOrEmpty(nodeTitle) && nodeId > 0 && nodeTitlesById.ContainsKey(nodeId)) nodeTitle = nodeTitlesById[nodeId];
+                        if (string.IsNullOrEmpty(nodeTitle)) nodeTitle = "Объект";
 
                         if (id > 0)
                         {
-                            _allPoints.Add(new MeasurePointItem 
-                            { 
-                                Id = id, 
-                                Title = pointTitle, 
-                                NodeTitle = nodeTitle 
-                            });
+                            _allPoints.Add(new MeasurePointItem { Id = id, Title = pointTitle, NodeTitle = nodeTitle });
                         }
                     }
                 }
@@ -325,24 +296,28 @@ namespace LersMonitor
                 uniqueNodes.Insert(0, "Все объекты");
                 CmbNode.ItemsSource = uniqueNodes;
                 CmbNode.SelectedIndex = 0;
+                CmbNodeDashboard.ItemsSource = uniqueNodes;
+                CmbNodeDashboard.SelectedIndex = 0;
                 
                 CmbSystemType.ItemsSource = new List<string> { "Все системы", "Теплоснабжение", "ГВС", "Подпитка", "ХВС" };
                 CmbSystemType.SelectedIndex = 0;
+                CmbSystemTypeDashboard.ItemsSource = new List<string> { "Все системы", "Теплоснабжение", "ГВС", "Подпитка", "ХВС" };
+                CmbSystemTypeDashboard.SelectedIndex = 0;
 
                 CmbTrendPoint.ItemsSource = _allPoints;
                 if (_allPoints.Any()) CmbTrendPoint.SelectedIndex = 0;
 
                 ApplyFilters();
+                ApplyFiltersDashboard();
 
                 if (_settings.SelectedPointIds != null && _settings.SelectedPointIds.Any())
                 {
                     foreach (var p in _allPoints.Where(p => _settings.SelectedPointIds.Contains(p.Id)))
-                    {
                         ListPoints.SelectedItems.Add(p);
-                    }
                 }
 
                 BtnStartMonitor.IsEnabled = true;
+                BtnStartDashboard.IsEnabled = true;
                 TxtStatus.Text = $"Подключено к {host}:{port}. Загружено точек: {_allPoints.Count}";
             }
             catch (Exception ex)
@@ -358,31 +333,43 @@ namespace LersMonitor
 
         private void ApplyFilters_Changed(object sender, SelectionChangedEventArgs e) => ApplyFilters();
         private void ApplyFilters_Changed(object sender, TextChangedEventArgs e) => ApplyFilters();
+        private void ApplyFiltersDashboard_Changed(object sender, SelectionChangedEventArgs e) => ApplyFiltersDashboard();
+        private void ApplyFiltersDashboard_Changed(object sender, TextChangedEventArgs e) => ApplyFiltersDashboard();
 
         private void ApplyFilters()
         {
             if (_allPoints == null || !_allPoints.Any()) return;
-
             string query = TxtSearch.Text.Trim().ToLower();
             string selectedNode = CmbNode.SelectedItem as string;
             string selectedType = CmbSystemType.SelectedItem as string;
 
             var filtered = _allPoints.AsEnumerable();
-
-            if (!string.IsNullOrEmpty(query))
-                filtered = filtered.Where(p => p.DisplayName.ToLower().Contains(query));
-
-            if (!string.IsNullOrEmpty(selectedNode) && selectedNode != "Все объекты")
-                filtered = filtered.Where(p => p.NodeTitle == selectedNode);
-
-            if (!string.IsNullOrEmpty(selectedType) && selectedType != "Все системы")
-                filtered = filtered.Where(p => p.Title.ToLower().Contains(selectedType.ToLower()));
+            if (!string.IsNullOrEmpty(query)) filtered = filtered.Where(p => p.DisplayName.ToLower().Contains(query));
+            if (!string.IsNullOrEmpty(selectedNode) && selectedNode != "Все объекты") filtered = filtered.Where(p => p.NodeTitle == selectedNode);
+            if (!string.IsNullOrEmpty(selectedType) && selectedType != "Все системы") filtered = filtered.Where(p => p.Title.ToLower().Contains(selectedType.ToLower()));
 
             ListPoints.ItemsSource = filtered.ToList();
         }
 
+        private void ApplyFiltersDashboard()
+        {
+            if (_allPoints == null || !_allPoints.Any()) return;
+            string query = TxtSearchDashboard.Text.Trim().ToLower();
+            string selectedNode = CmbNodeDashboard.SelectedItem as string;
+            string selectedType = CmbSystemTypeDashboard.SelectedItem as string;
+
+            var filtered = _allPoints.AsEnumerable();
+            if (!string.IsNullOrEmpty(query)) filtered = filtered.Where(p => p.DisplayName.ToLower().Contains(query));
+            if (!string.IsNullOrEmpty(selectedNode) && selectedNode != "Все объекты") filtered = filtered.Where(p => p.NodeTitle == selectedNode);
+            if (!string.IsNullOrEmpty(selectedType) && selectedType != "Все системы") filtered = filtered.Where(p => p.Title.ToLower().Contains(selectedType.ToLower()));
+
+            ListPointsDashboard.ItemsSource = filtered.ToList();
+        }
+
         private void BtnSelectAll_Click(object sender, RoutedEventArgs e) => ListPoints.SelectAll();
         private void BtnClearSelection_Click(object sender, RoutedEventArgs e) => ListPoints.UnselectAll();
+        private void BtnSelectAllDashboard_Click(object sender, RoutedEventArgs e) => ListPointsDashboard.SelectAll();
+        private void BtnClearSelectionDashboard_Click(object sender, RoutedEventArgs e) => ListPointsDashboard.UnselectAll();
 
         private void ColumnToggle_Click(object sender, RoutedEventArgs e)
         {
@@ -400,10 +387,12 @@ namespace LersMonitor
             }
         }
 
-        // --- ГРУППОВАЯ И ОДИНОЧНАЯ НАСТРОЙКА ГРАНИЦ ---
-        private void BtnSettings_Click(object sender, RoutedEventArgs e)
+        // --- ГРУППОВАЯ И ОДИНОЧНАЯ НАСТРОЙКА ГРАНИЦ (ОБЩАЯ ДЛЯ ВСЕХ) ---
+        private void BtnSettingsShared_Click(object sender, RoutedEventArgs e)
         {
-            var selected = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
+            // Определяем, с какой вкладки нажали
+            var activeList = TabDashboard.IsChecked == true ? ListPointsDashboard : ListPoints;
+            var selected = activeList.SelectedItems.Cast<MeasurePointItem>().ToList();
             if (!selected.Any())
             {
                 MessageBox.Show("Выберите хотя бы одну точку для настройки границ.", "Внимание", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -420,23 +409,14 @@ namespace LersMonitor
 
                 if (_settings.PointLimits.TryGetValue(point.Id, out var limits))
                 {
-                    TxtT1Min.Text = limits.T1Min?.ToString();
-                    TxtT1Max.Text = limits.T1Max?.ToString();
-                    TxtT2Min.Text = limits.T2Min?.ToString();
-                    TxtT2Max.Text = limits.T2Max?.ToString();
-                    TxtP1Min.Text = limits.P1Min?.ToString();
-                    TxtP1Max.Text = limits.P1Max?.ToString();
-                    TxtP2Min.Text = limits.P2Min?.ToString();
-                    TxtP2Max.Text = limits.P2Max?.ToString();
-                    TxtV1Min.Text = limits.V1Min?.ToString();
-                    TxtV1Max.Text = limits.V1Max?.ToString();
-                    TxtV2Min.Text = limits.V2Min?.ToString();
-                    TxtV2Max.Text = limits.V2Max?.ToString();
+                    TxtT1Min.Text = limits.T1Min?.ToString(); TxtT1Max.Text = limits.T1Max?.ToString();
+                    TxtT2Min.Text = limits.T2Min?.ToString(); TxtT2Max.Text = limits.T2Max?.ToString();
+                    TxtP1Min.Text = limits.P1Min?.ToString(); TxtP1Max.Text = limits.P1Max?.ToString();
+                    TxtP2Min.Text = limits.P2Min?.ToString(); TxtP2Max.Text = limits.P2Max?.ToString();
+                    TxtV1Min.Text = limits.V1Min?.ToString(); TxtV1Max.Text = limits.V1Max?.ToString();
+                    TxtV2Min.Text = limits.V2Min?.ToString(); TxtV2Max.Text = limits.V2Max?.ToString();
                 }
-                else
-                {
-                    ClearLimitsFields();
-                }
+                else ClearLimitsFields();
             }
             else
             {
@@ -468,18 +448,12 @@ namespace LersMonitor
         {
             if (!_editingPoints.Any()) return;
 
-            var t1Min = ParseDouble(TxtT1Min.Text);
-            var t1Max = ParseDouble(TxtT1Max.Text);
-            var t2Min = ParseDouble(TxtT2Min.Text);
-            var t2Max = ParseDouble(TxtT2Max.Text);
-            var p1Min = ParseDouble(TxtP1Min.Text);
-            var p1Max = ParseDouble(TxtP1Max.Text);
-            var p2Min = ParseDouble(TxtP2Min.Text);
-            var p2Max = ParseDouble(TxtP2Max.Text);
-            var v1Min = ParseDouble(TxtV1Min.Text);
-            var v1Max = ParseDouble(TxtV1Max.Text);
-            var v2Min = ParseDouble(TxtV2Min.Text);
-            var v2Max = ParseDouble(TxtV2Max.Text);
+            var t1Min = ParseDouble(TxtT1Min.Text); var t1Max = ParseDouble(TxtT1Max.Text);
+            var t2Min = ParseDouble(TxtT2Min.Text); var t2Max = ParseDouble(TxtT2Max.Text);
+            var p1Min = ParseDouble(TxtP1Min.Text); var p1Max = ParseDouble(TxtP1Max.Text);
+            var p2Min = ParseDouble(TxtP2Min.Text); var p2Max = ParseDouble(TxtP2Max.Text);
+            var v1Min = ParseDouble(TxtV1Min.Text); var v1Max = ParseDouble(TxtV1Max.Text);
+            var v2Min = ParseDouble(TxtV2Min.Text); var v2Max = ParseDouble(TxtV2Max.Text);
 
             foreach (var point in _editingPoints)
             {
@@ -502,12 +476,13 @@ namespace LersMonitor
                 if (!string.IsNullOrWhiteSpace(TxtV2Min.Text)) limits.V2Min = v2Min;
                 if (!string.IsNullOrWhiteSpace(TxtV2Max.Text)) limits.V2Max = v2Max;
 
+                // Обновляем VM на первой вкладке
                 var vm = _results.FirstOrDefault(r => r.Id == point.Id);
-                if (vm != null)
-                {
-                    vm.Limits = limits;
-                    vm.RefreshColors();
-                }
+                if (vm != null) { vm.Limits = limits; vm.RefreshColors(); }
+                
+                // Обновляем VM на дашборде
+                var vmDash = _dashboardResults.FirstOrDefault(r => r.Id == point.Id);
+                if (vmDash != null) { vmDash.Limits = limits; vmDash.RefreshColors(); }
             }
 
             SaveUserSettings();
@@ -518,8 +493,7 @@ namespace LersMonitor
         private double? ParseDouble(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return null;
-            if (double.TryParse(text.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out double res))
-                return res;
+            if (double.TryParse(text.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out double res)) return res;
             return null;
         }
 
@@ -537,7 +511,209 @@ namespace LersMonitor
             vm.Q  = ExtractParameterValue(root, "q_delta", "q", "q_in", "q_out", "q_gvs", "Q_delta", "Q_in", "Q_out", "Q", "heat", "heatEnergy", "thermalEnergy", "q_total", "heatPower", "q1", "q2");
         }
 
-        // --- МОНИТОРИНГ ТЕКУЩИХ (НАТИВНЫЙ РЕЖИМ ЛЭРС) ---
+        // Вспомогательный метод для загрузки и обновления значений точки
+        private async Task<(bool isNew, DateTime? timeNow)> TryFetchAndUpdateAsync(PointResultViewModel vm, DateTime? timeBefore, CancellationToken token)
+        {
+            try
+            {
+                var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{vm.Id}/Consumption/Last", token);
+                if (res.IsSuccessStatusCode)
+                {
+                    var json = await res.Content.ReadAsStringAsync(token);
+                    if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                    {
+                        using var doc = JsonDocument.Parse(json);
+                        var root = doc.RootElement;
+                        var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
+                        bool isNew = timeNow != null && (timeBefore == null || timeNow > timeBefore);
+
+                        vm.DeviceTime = timeNow;
+                        UpdatePointValues(vm, root);
+                        vm.RefreshColors();
+
+                        return (isNew, timeNow);
+                    }
+                }
+            }
+            catch { }
+            return (false, null);
+        }
+
+        private static string ParseLersError(string jsonResponse, int statusCode)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(jsonResponse)) return $"Отказ ({statusCode})";
+                using var doc = JsonDocument.Parse(jsonResponse);
+                if (doc.RootElement.TryGetProperty("errorDescription", out var desc)) return desc.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("errorMessage", out var msg)) return msg.GetString() ?? "";
+                if (doc.RootElement.TryGetProperty("message", out var m)) return m.GetString() ?? "";
+            }
+            catch { }
+            return $"Отказ ({statusCode})";
+        }
+
+        // --- УНИВЕРСАЛЬНЫЙ МЕТОД ОПРОСА (С УМНОЙ ОЧЕРЕДЬЮ) ДЛЯ ВКЛАДКИ 1 И ДАШБОРДА ---
+        private async Task RunSmartPollingIterationAsync(
+            List<MeasurePointItem> selectedPoints, 
+            ObservableCollection<PointResultViewModel> targetCollection, 
+            IProgress<string> progress, 
+            CancellationToken token)
+        {
+            var initialTimes = new Dictionary<int, DateTime?>();
+            await Task.WhenAll(selectedPoints.Select(async p =>
+            {
+                try
+                {
+                    var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last", token);
+                    if (res.IsSuccessStatusCode)
+                    {
+                        var json = await res.Content.ReadAsStringAsync(token);
+                        if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                        {
+                            using var doc = JsonDocument.Parse(json);
+                            initialTimes[p.Id] = TryGetDate(doc.RootElement, "dateTime", "deviceTime", "date");
+                        }
+                    }
+                }
+                catch { }
+            }));
+
+            progress.Report("Запуск опроса оборудования...");
+
+            const int maxChecks = 100;
+            const int checkIntervalMs = 3000;
+            var rnd = new Random();
+
+            var pollingTasks = selectedPoints.Select(async pt =>
+            {
+                var vm = targetCollection.FirstOrDefault(r => r.Id == pt.Id);
+                if (vm == null) return;
+
+                initialTimes.TryGetValue(pt.Id, out var timeBefore);
+                bool pollStarted = false;
+                bool pointFinished = false;
+                string lastError = "";
+
+                await Task.Delay(rnd.Next(50, 500), token);
+
+                for (int attempt = 1; attempt <= maxChecks; attempt++)
+                {
+                    if (token.IsCancellationRequested) break;
+
+                    var (isNew, tNow) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
+                    if (isNew)
+                    {
+                        vm.Status = pollStarted ? "Опрошено успешно" : "Опрошено попутно (успешно)";
+                        pointFinished = true;
+                        break;
+                    }
+
+                    if (!pollStarted)
+                    {
+                        try
+                        {
+                            var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{pt.Id}/Currents?once=true");
+                            pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
+                            var pollRes = await _http.SendAsync(pollReq, token);
+
+                            if (pollRes.IsSuccessStatusCode)
+                            {
+                                pollStarted = true;
+                                vm.Status = $"Идёт опрос ({attempt}/{maxChecks})...";
+                            }
+                            else if ((int)pollRes.StatusCode == 422)
+                            {
+                                string errStr = await pollRes.Content.ReadAsStringAsync(token);
+                                lastError = ParseLersError(errStr, 422);
+                                vm.Status = $"В очереди: {lastError} [{attempt}/{maxChecks}]";
+                            }
+                            else
+                            {
+                                string errStr = await pollRes.Content.ReadAsStringAsync(token);
+                                lastError = ParseLersError(errStr, (int)pollRes.StatusCode);
+                                vm.Status = $"Ошибка запуска: {lastError} [{attempt}/{maxChecks}]";
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            lastError = "Сбой сети";
+                            vm.Status = $"В очереди (нет связи с ЛЭРС) [{attempt}/{maxChecks}]";
+                        }
+                    }
+                    else
+                    {
+                        vm.Status = $"Идёт опрос ({attempt}/{maxChecks})...";
+                    }
+
+                    await Task.Delay(checkIntervalMs, token);
+                }
+
+                if (!pointFinished && !token.IsCancellationRequested)
+                {
+                    var (isNewEnd, tEnd) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
+                    if (isNewEnd) vm.Status = "Опрошено успешно";
+                    else vm.Status = pollStarted ? "Таймаут (прибор не ответил)" : $"Отказ очереди: {lastError}";
+                }
+            });
+
+            await Task.WhenAll(pollingTasks);
+        }
+
+        // --- ЭКРАН 1: ОБЩИЙ ОПРОС ---
+        private async void BtnStartMonitor_Click(object sender, RoutedEventArgs e)
+        {
+            var selectedPoints = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
+            if (!selectedPoints.Any()) { MessageBox.Show("Выберите точки учёта в списке слева."); return; }
+
+            SaveUserSettings(selectedPoints.Select(p => p.Id).ToList());
+
+            _generalMonitorCts = new CancellationTokenSource();
+            var token = _generalMonitorCts.Token;
+
+            _results.Clear();
+            foreach (var p in selectedPoints)
+            {
+                _settings.PointLimits.TryGetValue(p.Id, out var pointLimits);
+                _results.Add(new PointResultViewModel { Id = p.Id, Title = p.Title, NodeTitle = p.NodeTitle, Status = "Ожидание...", Limits = pointLimits });
+            }
+
+            try
+            {
+                BtnStartMonitor.IsEnabled = false;
+                BtnCancelMonitor.Visibility = Visibility.Visible;
+                TxtStatus.Text = "Фиксация времени до опроса...";
+
+                var progress = new Progress<string>(s => TxtStatus.Text = s);
+                await RunSmartPollingIterationAsync(selectedPoints, _results, progress, token);
+                
+                if (!token.IsCancellationRequested) TxtStatus.Text = "Мониторинг завершен.";
+                SaveUserSettings();
+            }
+            catch (OperationCanceledException)
+            {
+                TxtStatus.Text = "Опрос отменен.";
+                foreach (var r in _results.Where(x => !x.Status.Contains("успешно"))) r.Status = "Отменено";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка во время опроса: {ex.Message}");
+                TxtStatus.Text = "Сбой операции";
+            }
+            finally
+            {
+                BtnStartMonitor.IsEnabled = true;
+                BtnCancelMonitor.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void BtnCancelMonitor_Click(object sender, RoutedEventArgs e)
+        {
+            _generalMonitorCts?.Cancel();
+            TxtStatus.Text = "Опрос отменен пользователем.";
+        }
+
+        // --- ЭКРАН 2: МОНИТОРИНГ ТЕКУЩИХ ---
         private async void BtnStartTrend_Click(object sender, RoutedEventArgs e)
         {
             if (CmbTrendPoint.SelectedItem is not MeasurePointItem selectedPoint)
@@ -559,7 +735,6 @@ namespace LersMonitor
             CmbTrendDuration.IsEnabled = false;
 
             _settings.PointLimits.TryGetValue(selectedPoint.Id, out var limits);
-
             TxtStatus.Text = $"Запуск мониторинга для {selectedPoint.Title} (макс. {durationMinutes} мин)...";
 
             try
@@ -598,19 +773,8 @@ namespace LersMonitor
                                 if (lastObservedTime == null || timeNow > lastObservedTime)
                                 {
                                     lastObservedTime = timeNow;
-
-                                    var row = new PointResultViewModel
-                                    {
-                                        Id = selectedPoint.Id,
-                                        Title = selectedPoint.Title,
-                                        NodeTitle = selectedPoint.NodeTitle,
-                                        DeviceTime = timeNow,
-                                        Limits = limits,
-                                        Status = "Снято"
-                                    };
-                                    
+                                    var row = new PointResultViewModel { Id = selectedPoint.Id, Title = selectedPoint.Title, NodeTitle = selectedPoint.NodeTitle, DeviceTime = timeNow, Limits = limits, Status = "Снято" };
                                     UpdatePointValues(row, root);
-
                                     _trendHistory.Insert(0, row);
                                     row.RefreshColors();
                                     
@@ -634,8 +798,7 @@ namespace LersMonitor
                 BtnStopTrend.Visibility = Visibility.Collapsed;
                 CmbTrendPoint.IsEnabled = true;
                 CmbTrendDuration.IsEnabled = true;
-                if (!TxtStatus.Text.StartsWith("Лимит времени"))
-                    TxtStatus.Text = "Мониторинг точки остановлен.";
+                if (!TxtStatus.Text.StartsWith("Лимит времени")) TxtStatus.Text = "Мониторинг точки остановлен.";
             }
         }
 
@@ -654,232 +817,83 @@ namespace LersMonitor
             }
         }
 
-        private void BtnStopTrend_Click(object sender, RoutedEventArgs e)
+        private void BtnStopTrend_Click(object sender, RoutedEventArgs e) => StopNativeLersTrend();
+        private void BtnClearTrend_Click(object sender, RoutedEventArgs e) => _trendHistory.Clear();
+
+        // --- ЭКРАН 3: ДАШБОРД (АВТООПРОС С ПЛИТКАМИ) ---
+        private async void BtnStartDashboard_Click(object sender, RoutedEventArgs e)
         {
-            StopNativeLersTrend();
-        }
-
-        private void BtnClearTrend_Click(object sender, RoutedEventArgs e)
-        {
-            _trendHistory.Clear();
-        }
-
-        private void BtnCancelMonitor_Click(object sender, RoutedEventArgs e)
-        {
-            _generalMonitorCts?.Cancel();
-            TxtStatus.Text = "Опрос отменен пользователем.";
-        }
-
-        private static string ParseLersError(string jsonResponse, int statusCode)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(jsonResponse)) return $"Отказ ({statusCode})";
-                using var doc = JsonDocument.Parse(jsonResponse);
-                if (doc.RootElement.TryGetProperty("errorDescription", out var desc)) return desc.GetString() ?? "";
-                if (doc.RootElement.TryGetProperty("errorMessage", out var msg)) return msg.GetString() ?? "";
-                if (doc.RootElement.TryGetProperty("message", out var m)) return m.GetString() ?? "";
-            }
-            catch { }
-            return $"Отказ ({statusCode})";
-        }
-
-        // Вспомогательный метод для загрузки и обновления значений точки
-        private async Task<(bool isNew, DateTime? timeNow)> TryFetchAndUpdateAsync(PointResultViewModel vm, DateTime? timeBefore, CancellationToken token)
-        {
-            try
-            {
-                var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{vm.Id}/Consumption/Last", token);
-                if (res.IsSuccessStatusCode)
-                {
-                    var json = await res.Content.ReadAsStringAsync(token);
-                    if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
-                    {
-                        using var doc = JsonDocument.Parse(json);
-                        var root = doc.RootElement;
-                        var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
-
-                        bool isNew = timeNow != null && (timeBefore == null || timeNow > timeBefore);
-
-                        vm.DeviceTime = timeNow;
-                        UpdatePointValues(vm, root);
-                        vm.RefreshColors();
-
-                        return (isNew, timeNow);
-                    }
-                }
-            }
-            catch { }
-            return (false, null);
-        }
-
-        // --- УМНЫЙ ОБЩИЙ ОПРОС ВЫБРАННЫХ ТОЧЕК (ДИНАМИЧЕСКИЙ) ---
-        private async void BtnStartMonitor_Click(object sender, RoutedEventArgs e)
-        {
-            var selectedPoints = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
+            var selectedPoints = ListPointsDashboard.SelectedItems.Cast<MeasurePointItem>().ToList();
             if (!selectedPoints.Any())
             {
-                MessageBox.Show("Выберите точки учёта в списке слева.");
+                MessageBox.Show("Выберите точки учёта для дашборда.", "Внимание", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            SaveUserSettings(selectedPoints.Select(p => p.Id).ToList());
+            int intervalMin = CmbDashboardInterval.SelectedItem is int min ? min : 10;
+            _dashboardCts = new CancellationTokenSource();
+            var token = _dashboardCts.Token;
 
-            _generalMonitorCts = new CancellationTokenSource();
-            var token = _generalMonitorCts.Token;
+            BtnStartDashboard.Visibility = Visibility.Collapsed;
+            BtnStopDashboard.Visibility = Visibility.Visible;
+            CmbDashboardInterval.IsEnabled = false;
 
-            _results.Clear();
+            _dashboardResults.Clear();
             foreach (var p in selectedPoints)
             {
                 _settings.PointLimits.TryGetValue(p.Id, out var pointLimits);
-                _results.Add(new PointResultViewModel
-                {
-                    Id = p.Id,
-                    Title = p.Title,
-                    NodeTitle = p.NodeTitle,
-                    Status = "Ожидание очереди...",
-                    Limits = pointLimits
-                });
+                var vm = new PointResultViewModel { Id = p.Id, Title = p.Title, NodeTitle = p.NodeTitle, Status = "Ожидание автоопроса...", Limits = pointLimits };
+                _dashboardResults.Add(vm);
+                
+                // Подтягиваем старые данные для красоты перед стартом
+                await TryFetchAndUpdateAsync(vm, null, token);
+            }
+
+            // Логика переключения UI
+            if (selectedPoints.Count == 1)
+            {
+                PanelSinglePoint.Visibility = Visibility.Visible;
+                PanelMultiPoint.Visibility = Visibility.Collapsed;
+                PanelSinglePoint.DataContext = _dashboardResults.First();
+            }
+            else
+            {
+                PanelSinglePoint.Visibility = Visibility.Collapsed;
+                PanelMultiPoint.Visibility = Visibility.Visible;
             }
 
             try
             {
-                BtnStartMonitor.IsEnabled = false;
-                BtnCancelMonitor.Visibility = Visibility.Visible;
-                TxtStatus.Text = "Фиксация времени до опроса...";
-
-                var initialTimes = new Dictionary<int, DateTime?>();
-                await Task.WhenAll(selectedPoints.Select(async p =>
+                while (!token.IsCancellationRequested)
                 {
-                    try
-                    {
-                        var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last", token);
-                        if (res.IsSuccessStatusCode)
-                        {
-                            var json = await res.Content.ReadAsStringAsync(token);
-                            if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
-                            {
-                                using var doc = JsonDocument.Parse(json);
-                                initialTimes[p.Id] = TryGetDate(doc.RootElement, "dateTime", "deviceTime", "date");
-                            }
-                        }
-                    }
-                    catch { }
-                }));
+                    var progress = new Progress<string>(s => TxtStatus.Text = $"Дашборд: {s}");
+                    await RunSmartPollingIterationAsync(selectedPoints, _dashboardResults, progress, token);
 
-                TxtStatus.Text = "Запуск интеллектуального опроса...";
+                    if (token.IsCancellationRequested) break;
 
-                const int maxChecks = 100; // Увеличенный таймаут до 5 минут 
-                const int checkIntervalMs = 3000;
-                var rnd = new Random();
-
-                // Опрашиваем ВСЕ точки независимыми параллельными задачами. Без группировки по имени объекта!
-                var pollingTasks = selectedPoints.Select(async pt =>
-                {
-                    var vm = _results.FirstOrDefault(r => r.Id == pt.Id);
-                    if (vm == null) return;
-
-                    initialTimes.TryGetValue(pt.Id, out var timeBefore);
-                    bool pollStarted = false;
-                    bool pointFinished = false;
-                    string lastError = "";
-
-                    // Слегка размазываем старт по времени, чтобы не заДДОСить сервер тысячей TCP соединений разом
-                    await Task.Delay(rnd.Next(50, 500), token);
-
-                    for (int attempt = 1; attempt <= maxChecks; attempt++)
+                    DateTime nextRun = DateTime.Now.AddMinutes(intervalMin);
+                    while (DateTime.Now < nextRun)
                     {
                         if (token.IsCancellationRequested) break;
-
-                        // 1. Проверяем БД — вдруг данные уже обновились (опросились попутно соседним потоком/точкой)
-                        var (isNew, tNow) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
-                        if (isNew)
-                        {
-                            vm.Status = pollStarted ? "Опрошено успешно" : "Опрошено попутно (успешно)";
-                            pointFinished = true;
-                            break;
-                        }
-
-                        // 2. Если данные старые, пробуем занять порт 
-                        if (!pollStarted)
-                        {
-                            try
-                            {
-                                var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{pt.Id}/Currents?once=true");
-                                pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
-                                var pollRes = await _http.SendAsync(pollReq, token);
-
-                                if (pollRes.IsSuccessStatusCode)
-                                {
-                                    pollStarted = true;
-                                    vm.Status = $"Идёт опрос прибора ({attempt}/{maxChecks})...";
-                                }
-                                else if ((int)pollRes.StatusCode == 422)
-                                {
-                                    string errStr = await pollRes.Content.ReadAsStringAsync(token);
-                                    lastError = ParseLersError(errStr, 422);
-                                    vm.Status = $"В очереди: {lastError} [{attempt}/{maxChecks}]";
-                                    // Порт физически занят (этой же котельной или другим модемом). 
-                                    // Мы не сдаёмся! Ждём 3 секунды и на следующей итерации цикла снова попытаемся.
-                                }
-                                else
-                                {
-                                    string errStr = await pollRes.Content.ReadAsStringAsync(token);
-                                    lastError = ParseLersError(errStr, (int)pollRes.StatusCode);
-                                    vm.Status = $"Ошибка запуска: {lastError} [{attempt}/{maxChecks}]";
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                lastError = "Сбой сети";
-                                vm.Status = $"В очереди (нет связи с ЛЭРС) [{attempt}/{maxChecks}]";
-                            }
-                        }
-                        else
-                        {
-                            vm.Status = $"Идёт опрос прибора ({attempt}/{maxChecks})...";
-                        }
-
-                        await Task.Delay(checkIntervalMs, token);
+                        var remain = nextRun - DateTime.Now;
+                        TxtStatus.Text = $"Дашборд обновлён. Следующий опрос через {(int)remain.TotalMinutes} мин {remain.Seconds} сек";
+                        await Task.Delay(1000, token);
                     }
-
-                    // Если 100 итераций прошло, а данных так и нет
-                    if (!pointFinished && !token.IsCancellationRequested)
-                    {
-                        var (isNewEnd, tEnd) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
-                        if (isNewEnd)
-                        {
-                            vm.Status = "Опрошено успешно";
-                        }
-                        else
-                        {
-                            vm.Status = pollStarted ? "Таймаут (прибор не ответил)" : $"Отказ очереди: {lastError}";
-                        }
-                    }
-                });
-
-                await Task.WhenAll(pollingTasks);
-                
-                if (!token.IsCancellationRequested)
-                    TxtStatus.Text = "Мониторинг завершен.";
-                SaveUserSettings();
+                }
             }
-            catch (OperationCanceledException)
-            {
-                TxtStatus.Text = "Опрос отменен.";
-                foreach (var r in _results.Where(x => !x.Status.Contains("успешно")))
-                    r.Status = "Отменено";
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Ошибка во время опроса: {ex.Message}");
-                TxtStatus.Text = "Сбой операции";
-            }
+            catch (OperationCanceledException) { }
             finally
             {
-                BtnStartMonitor.IsEnabled = true;
-                BtnCancelMonitor.Visibility = Visibility.Collapsed;
+                BtnStartDashboard.Visibility = Visibility.Visible;
+                BtnStopDashboard.Visibility = Visibility.Collapsed;
+                CmbDashboardInterval.IsEnabled = true;
+                TxtStatus.Text = "Автоопрос дашборда остановлен.";
             }
+        }
+
+        private void BtnStopDashboard_Click(object sender, RoutedEventArgs e)
+        {
+            _dashboardCts?.Cancel();
         }
 
         private static double? ExtractParameterValue(JsonElement root, params string[] targetNames)
@@ -1005,8 +1019,11 @@ namespace LersMonitor
             OnPropertyChanged(nameof(P2Color));
             OnPropertyChanged(nameof(V1Color));
             OnPropertyChanged(nameof(V2Color));
+            OnPropertyChanged(nameof(TileBackground));
+            OnPropertyChanged(nameof(TileForeground));
         }
 
+        // --- ЦВЕТА ДЛЯ ТАБЛИЦЫ ---
         private Brush GetColor(double? val, double? min, double? max)
         {
             var defaultColor = Application.Current.MainWindow?.TryFindResource("LabelPrimary") as Brush ?? Brushes.Black;
@@ -1014,6 +1031,44 @@ namespace LersMonitor
             if (min.HasValue && val.Value < min.Value) return Brushes.Red;
             if (max.HasValue && val.Value > max.Value) return Brushes.Red;
             return defaultColor;
+        }
+
+        // --- ЦВЕТА ДЛЯ ДАШБОРДА ---
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush TileBackground
+        {
+            get
+            {
+                bool error = false;
+                error |= IsBreached(T1, Limits?.T1Min, Limits?.T1Max);
+                error |= IsBreached(T2, Limits?.T2Min, Limits?.T2Max);
+                error |= IsBreached(T3, null, null); // Если нужны лимиты на T3, можно добавить
+                error |= IsBreached(P1, Limits?.P1Min, Limits?.P1Max);
+                error |= IsBreached(P2, Limits?.P2Min, Limits?.P2Max);
+                error |= IsBreached(V1, Limits?.V1Min, Limits?.V1Max);
+                error |= IsBreached(V2, Limits?.V2Min, Limits?.V2Max);
+
+                if (error) return (Brush)Application.Current.MainWindow.FindResource("AccentRed");
+
+                if (!string.IsNullOrEmpty(Status) && (Status.Contains("Таймаут") || Status.Contains("Отказ") || Status.Contains("Сбой") || Status.Contains("Ошибка")))
+                    return (Brush)Application.Current.MainWindow.FindResource("AccentOrange");
+
+                if (string.IsNullOrEmpty(Status) || Status.Contains("Ожидание") || Status.Contains("В очереди") || Status.Contains("Идёт"))
+                    return new SolidColorBrush((Color)ColorConverter.ConvertFromString("#8E8E93")); // Серый цвет ожидания
+
+                return (Brush)Application.Current.MainWindow.FindResource("AccentGreen");
+            }
+        }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush TileForeground => Brushes.White;
+
+        private bool IsBreached(double? val, double? min, double? max)
+        {
+            if (!val.HasValue) return false;
+            if (min.HasValue && val.Value < min.Value) return true;
+            if (max.HasValue && val.Value > max.Value) return true;
+            return false;
         }
 
         private int _id;
@@ -1029,35 +1084,35 @@ namespace LersMonitor
         public DateTime? DeviceTime { get => _deviceTime; set { _deviceTime = value; OnPropertyChanged(); } }
         
         private double? _t1;
-        public double? T1 { get => _t1; set { _t1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T1Color)); } }
+        public double? T1 { get => _t1; set { _t1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T1Color)); OnPropertyChanged(nameof(TileBackground)); } }
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush T1Color => GetColor(T1, Limits?.T1Min, Limits?.T1Max);
         
         private double? _t2;
-        public double? T2 { get => _t2; set { _t2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T2Color)); } }
+        public double? T2 { get => _t2; set { _t2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T2Color)); OnPropertyChanged(nameof(TileBackground)); } }
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush T2Color => GetColor(T2, Limits?.T2Min, Limits?.T2Max);
         
         private double? _t3;
-        public double? T3 { get => _t3; set { _t3 = value; OnPropertyChanged(); } }
+        public double? T3 { get => _t3; set { _t3 = value; OnPropertyChanged(); OnPropertyChanged(nameof(TileBackground)); } }
         
         private double? _p1;
-        public double? P1 { get => _p1; set { _p1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(P1Color)); } }
+        public double? P1 { get => _p1; set { _p1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(P1Color)); OnPropertyChanged(nameof(TileBackground)); } }
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush P1Color => GetColor(P1, Limits?.P1Min, Limits?.P1Max);
         
         private double? _p2;
-        public double? P2 { get => _p2; set { _p2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(P2Color)); } }
+        public double? P2 { get => _p2; set { _p2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(P2Color)); OnPropertyChanged(nameof(TileBackground)); } }
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush P2Color => GetColor(P2, Limits?.P2Min, Limits?.P2Max);
         
         private double? _v1;
-        public double? V1 { get => _v1; set { _v1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(V1Color)); } }
+        public double? V1 { get => _v1; set { _v1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(V1Color)); OnPropertyChanged(nameof(TileBackground)); } }
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush V1Color => GetColor(V1, Limits?.V1Min, Limits?.V1Max);
         
         private double? _v2;
-        public double? V2 { get => _v2; set { _v2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(V2Color)); } }
+        public double? V2 { get => _v2; set { _v2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(V2Color)); OnPropertyChanged(nameof(TileBackground)); } }
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush V2Color => GetColor(V2, Limits?.V2Min, Limits?.V2Max);
         
@@ -1071,6 +1126,6 @@ namespace LersMonitor
         public double? Q { get => _q; set { _q = value; OnPropertyChanged(); } }
         
         private string _status = string.Empty;
-        public string Status { get => _status; set { _status = value; OnPropertyChanged(); } }
+        public string Status { get => _status; set { _status = value; OnPropertyChanged(); OnPropertyChanged(nameof(TileBackground)); } }
     }
 }
