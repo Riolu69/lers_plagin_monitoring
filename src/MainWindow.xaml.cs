@@ -21,7 +21,6 @@ namespace LersMonitor
 {
     public partial class App : Application { }
 
-    // Класс настроек дашборда для биндинга фильтров прямо в DataTemplate
     public class DashSettings : INotifyPropertyChanged
     {
         public static DashSettings Instance { get; } = new DashSettings();
@@ -71,7 +70,7 @@ namespace LersMonitor
             CmbTrendDuration.ItemsSource = Enumerable.Range(1, 10).ToList();
             CmbTrendDuration.SelectedItem = 3;
 
-            CmbDashboardInterval.ItemsSource = new List<int> { 5, 10, 15, 20, 30, 60 };
+            CmbDashboardInterval.ItemsSource = new List<int> { 1, 2, 3, 5, 10, 15, 20, 30, 60 };
             CmbDashboardInterval.SelectedItem = 10;
 
             _themeTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
@@ -350,7 +349,9 @@ namespace LersMonitor
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка подключения:\n\n{ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Ошибка подключения:
+
+{ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
                 TxtStatus.Text = "Ошибка подключения";
             }
             finally { BtnConnect.IsEnabled = true; }
@@ -605,47 +606,95 @@ namespace LersMonitor
                     if (vm == null) continue;
 
                     initialTimes.TryGetValue(pt.Id, out var timeBefore);
+                    
                     var (isNew, tNow) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
                     if (isNew) { vm.Status = "Опрошено успешно"; nodeHadAnySuccess = true; continue; }
 
-                    bool pollStarted = false; string lastError = "";
+                    bool pollStarted = false; 
+                    bool pointFinished = false; 
+                    string lastError = "";
+
+                    // ФАЗА 1: ОЧЕРЕДЬ И ЗАПУСК ОПРОСА
                     for (int r = 1; r <= 15; r++) 
                     {
                         if (token.IsCancellationRequested) break;
+                        
+                        var (isNewWait, _) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
+                        if (isNewWait) 
+                        { 
+                            vm.Status = "Опрошено успешно"; 
+                            pollStarted = true; 
+                            pointFinished = true; 
+                            nodeHadAnySuccess = true; 
+                            break; 
+                        }
+
                         try
                         {
                             var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{pt.Id}/Currents?once=true");
                             pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
                             var pollRes = await _http.SendAsync(pollReq, token);
-                            if (pollRes.IsSuccessStatusCode) { pollStarted = true; break; }
-                            else {
+                            
+                            if (pollRes.IsSuccessStatusCode) 
+                            { 
+                                pollStarted = true; 
+                                break; 
+                            }
+                            else 
+                            {
                                 string errStr = await pollRes.Content.ReadAsStringAsync(token);
-                                lastError = ParseLersError(errStr, (int)pollRes.StatusCode);
-                                if (nodeHadAnySuccess && (int)pollRes.StatusCode == 422) break; 
+                                int code = (int)pollRes.StatusCode;
+                                lastError = ParseLersError(errStr, code);
+                                
+                                // Строгая проверка на занятость через коды HTTP (409 Conflict, 423 Locked) и текст
+                                if (code == 409 || code == 423 || 
+                                    lastError.IndexOf("занят", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    lastError.IndexOf("already", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    lastError.IndexOf("используется", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    lastError.IndexOf("ожидани", StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    pollStarted = true; 
+                                    break; 
+                                }
+
+                                if (nodeHadAnySuccess && code == 422) break; 
                                 vm.Status = $"В очереди: {lastError} [{r}/15]";
                             }
                         }
                         catch { lastError = "Сбой сети"; }
-                        await Task.Delay(3000, token);
+                        
+                        if (!pollStarted) await Task.Delay(3000, token);
                     }
 
-                    if (!pollStarted && !token.IsCancellationRequested)
+                    if (!pollStarted && !token.IsCancellationRequested && !pointFinished)
                     {
                         await TryFetchAndUpdateAsync(vm, timeBefore, token); 
                         vm.Status = nodeHadAnySuccess ? "Опрошено успешно" : $"Отказ: {lastError}";
                         continue;
                     }
 
-                    bool pointFinished = false;
-                    for (int attempt = 1; attempt <= 25; attempt++)
+                    // ФАЗА 2: ОЖИДАНИЕ НОВЫХ ДАННЫХ ОТ ПРИБОРА
+                    if (pollStarted && !pointFinished)
                     {
-                        if (token.IsCancellationRequested) break;
-                        vm.Status = $"Идёт опрос прибора ({attempt}/25)...";
-                        await Task.Delay(3000, token);
-                        var (isNew2, tCheck) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
-                        if (isNew2) { vm.Status = "Опрошено успешно"; pointFinished = true; nodeHadAnySuccess = true; break; }
+                        // УВЕЛИЧЕНО до 60 попыток (3 минуты), так как котельные часто сидят на медленных CSD модемах
+                        for (int attempt = 1; attempt <= 60; attempt++)
+                        {
+                            if (token.IsCancellationRequested) break;
+                            vm.Status = $"Идёт опрос прибора ({attempt}/60)...";
+                            await Task.Delay(3000, token);
+                            
+                            var (isNew2, tCheck) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
+                            if (isNew2) 
+                            { 
+                                vm.Status = "Опрошено успешно"; 
+                                pointFinished = true; 
+                                nodeHadAnySuccess = true; 
+                                break; 
+                            }
+                        }
+                        if (!pointFinished && !token.IsCancellationRequested) 
+                            vm.Status = "Таймаут (данные не обновились)";
                     }
-                    if (!pointFinished && !token.IsCancellationRequested) vm.Status = "Таймаут";
                 }
             });
             await Task.WhenAll(pollingTasks);
@@ -795,14 +844,28 @@ namespace LersMonitor
                 while (!token.IsCancellationRequested)
                 {
                     var progress = new Progress<string>(s => TxtStatus.Text = $"Дашборд: {s}");
+                    // Активный пуш опроса
                     await RunSmartPollingIterationAsync(selectedPoints, _dashboardFlatPoints, progress, token);
                     if (token.IsCancellationRequested) break;
+                    
                     DateTime nextRun = DateTime.Now.AddMinutes(intervalMin);
+                    DateTime nextSilentCheck = DateTime.Now.AddSeconds(10); // Таймер фоновой проверки
+
+                    // Режим ожидания
                     while (DateTime.Now < nextRun)
                     {
                         if (token.IsCancellationRequested) break;
+                        
+                        // Каждые 10 секунд тихо дёргаем базу ЛЭРСа. Вдруг данные обновились сами (автоопросом сервера)
+                        if (DateTime.Now >= nextSilentCheck)
+                        {
+                            nextSilentCheck = DateTime.Now.AddSeconds(10);
+                            var fetchTasks = _dashboardFlatPoints.Select(vm => TryFetchAndUpdateAsync(vm, vm.DeviceTime, token));
+                            await Task.WhenAll(fetchTasks);
+                        }
+
                         var remain = nextRun - DateTime.Now;
-                        TxtStatus.Text = $"Дашборд обновлён. Следующий опрос через {(int)remain.TotalMinutes} мин {remain.Seconds} сек";
+                        TxtStatus.Text = $"Дашборд обновлён. Следующий активный запуск через {(int)remain.TotalMinutes} мин {remain.Seconds:D2} сек";
                         await Task.Delay(1000, token);
                     }
                 }
@@ -990,8 +1053,7 @@ namespace LersMonitor
             return false;
         }
 
-        // Логика Температурного графика
-        private bool IsTempScheduleBreached(double? t1, double? tnv, string scheduleStr)
+        private bool IsTempScheduleBreached(double? t1, double? tnv, string? scheduleStr)
         {
             if (!t1.HasValue || !tnv.HasValue || string.IsNullOrWhiteSpace(scheduleStr)) return false;
             try
@@ -1019,7 +1081,6 @@ namespace LersMonitor
                         }
                     }
                 }
-                // Считаем нарушением, если отклонение больше 3 градусов
                 return Math.Abs(t1.Value - expectedT1) > 3.0;
             }
             catch { return false; }
@@ -1078,7 +1139,7 @@ namespace LersMonitor
         private DateTime? _deviceTime; public DateTime? DeviceTime { get => _deviceTime; set { _deviceTime = value; OnPropertyChanged(); } }
         
         private double? _t1; public double? T1 { get => _t1; set { _t1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T1Color)); OnPropertyChanged(nameof(T1DashBg)); OnPropertyChanged(nameof(T1DashForeground)); OnPropertyChanged(nameof(SingleStatusColor)); } }
-        [System.Text.Json.Serialization.JsonIgnore] public Brush T1Color => (IsBreached(T1, Limits?.T1Min, Limits?.T1Max) || IsTempScheduleBreached(T1, Tnv, Limits?.TempSchedule)) ? Brushes.Red : ((Brush)Application.Current.MainWindow?.TryFindResource("LabelPrimary") ?? Brushes.Black);
+        [System.Text.Json.Serialization.JsonIgnore] public Brush T1Color => (IsBreached(T1, Limits?.T1Min, Limits?.T1Max) || IsTempScheduleBreached(T1, Tnv, Limits?.TempSchedule)) ? Brushes.Red : ((Brush?)Application.Current.MainWindow?.TryFindResource("LabelPrimary") ?? Brushes.Black);
         
         private double? _t2; public double? T2 { get => _t2; set { _t2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T2Color)); OnPropertyChanged(nameof(T2DashBg)); OnPropertyChanged(nameof(T2DashForeground)); OnPropertyChanged(nameof(SingleStatusColor)); } }
         [System.Text.Json.Serialization.JsonIgnore] public Brush T2Color => GetColor(T2, Limits?.T2Min, Limits?.T2Max);
