@@ -373,86 +373,70 @@
                 <Border.Effect>
                     <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/>
                 </Border.Effect>
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-
-                    <!-- Использование Viewbox предотвратит обрезание инпутов при узком окне -->
-                    <Viewbox Grid.Column="0" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left">
-                        <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <StackPanel Margin="0,0,12,4">
-                                <TextBlock Text="Сервер" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
-                                <TextBox x:Name="TxtHost" Width="120" Text="localhost"/>
-                            </StackPanel>
-                            <StackPanel Margin="0,0,12,4">
-                                <TextBlock Text="Порт" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
-                                <TextBox x:Name="TxtPort" Width="60" Text="10000"/>
-                            </StackPanel>
-                            <StackPanel Margin="0,0,12,4">
-                                <TextBlock Text="Логин" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
-                                <TextBox x:Name="TxtLogin" Width="95"/>
-                            </StackPanel>
-                            <StackPanel Margin="0,0,12,4">
-                                <TextBlock Text="Пароль" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
-                                <PasswordBox x:Name="TxtPassword" Width="95"/>
-                            </StackPanel>
-                            <CheckBox x:Name="ChkRemember" Content="Запомнить" IsChecked="True" VerticalAlignment="Bottom" Margin="0,0,14,10"/>
-
-                            <StackPanel Margin="0,0,12,4">
-                                <TextBlock Text="Тема" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
-                                <ComboBox x:Name="CmbTheme" Width="115" SelectionChanged="CmbTheme_SelectionChanged">
-                                    <ComboBoxItem Content="☀ Светлая"/>
-                                    <ComboBoxItem Content="🌙 Тёмная"/>
-                                    <ComboBoxItem Content="🕒 Авто"/>
-                                </ComboBox>
-                            </StackPanel>
-
-                            <StackPanel x:Name="PanelAutoTheme" Orientation="Horizontal" Visibility="Collapsed" Margin="0,0,12,4">
-                                <StackPanel Margin="0,0,6,0">
-                                    <TextBlock Text="День с" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
-                                    <TextBox x:Name="TxtThemeLight" Width="54" Text="08:00"/>
-                                </StackPanel>
-                                <StackPanel>
-                                    <TextBlock Text="Ночь с" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
-                                    <TextBox x:Name="TxtThemeDark" Width="54" Text="20:00"/>
-                                </StackPanel>
-                            </StackPanel>
-
-                            <StackPanel Margin="0,0,12,4">
-                                <TextBlock Text="Источник Тнв (улица)" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
-                                <StackPanel Orientation="Horizontal">
-                                    <ComboBox x:Name="CmbTnvSource" Width="190" DisplayMemberPath="DisplayName" SelectionChanged="CmbTnvSource_SelectionChanged"/>
-                                    <Border Background="{DynamicResource HeaderBackground}" BorderBrush="{DynamicResource BorderBrushColor}" BorderThickness="1" CornerRadius="8" Padding="8,0" Margin="6,0,0,0" Height="32">
-                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <TextBlock Text="Тнв: " FontSize="12" Foreground="{DynamicResource LabelSecondary}"/>
-                                            <TextBlock x:Name="TxtGlobalTnv" Text="—" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource AccentBlue}"/>
-                                            <TextBlock Text=" °C" FontSize="12" Foreground="{DynamicResource LabelSecondary}"/>
-                                        </StackPanel>
-                                    </Border>
-                                </StackPanel>
-                            </StackPanel>
-                        </WrapPanel>
-                    </Viewbox>
-
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom" Margin="8,0,0,5">
-                        <Button x:Name="BtnConnect" Content="Подключиться" 
-                                Style="{StaticResource ApplePrimaryButton}" 
-                                Click="BtnConnect_Click"/>
+                <!-- Использование WrapPanel без Viewbox предотвратит обрезание инпутов при узком окне без их уменьшения -->
+                <WrapPanel VerticalAlignment="Center">
+                    <StackPanel Margin="0,0,12,10">
+                        <TextBlock Text="Сервер" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
+                        <TextBox x:Name="TxtHost" Width="120" Text="localhost"/>
                     </StackPanel>
-                </Grid>
+                    <StackPanel Margin="0,0,12,10">
+                        <TextBlock Text="Порт" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
+                        <TextBox x:Name="TxtPort" Width="60" Text="10000"/>
+                    </StackPanel>
+                    <StackPanel Margin="0,0,12,10">
+                        <TextBlock Text="Логин" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
+                        <TextBox x:Name="TxtLogin" Width="95"/>
+                    </StackPanel>
+                    <StackPanel Margin="0,0,12,10">
+                        <TextBlock Text="Пароль" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
+                        <PasswordBox x:Name="TxtPassword" Width="95"/>
+                    </StackPanel>
+                    <CheckBox x:Name="ChkRemember" Content="Запомнить" IsChecked="True" VerticalAlignment="Bottom" Margin="0,0,14,16"/>
+
+                    <StackPanel Margin="0,0,12,10">
+                        <TextBlock Text="Тема" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
+                        <ComboBox x:Name="CmbTheme" Width="115" SelectionChanged="CmbTheme_SelectionChanged">
+                            <ComboBoxItem Content="☀ Светлая"/>
+                            <ComboBoxItem Content="🌙 Тёмная"/>
+                            <ComboBoxItem Content="🕒 Авто"/>
+                        </ComboBox>
+                    </StackPanel>
+
+                    <StackPanel x:Name="PanelAutoTheme" Orientation="Horizontal" Visibility="Collapsed" Margin="0,0,12,10">
+                        <StackPanel Margin="0,0,6,0">
+                            <TextBlock Text="День с" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
+                            <TextBox x:Name="TxtThemeLight" Width="54" Text="08:00"/>
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="Ночь с" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
+                            <TextBox x:Name="TxtThemeDark" Width="54" Text="20:00"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Margin="0,0,12,10">
+                        <TextBlock Text="Источник Тнв (улица)" FontSize="11" Foreground="{DynamicResource LabelSecondary}" Margin="2,0,0,4"/>
+                        <StackPanel Orientation="Horizontal">
+                            <ComboBox x:Name="CmbTnvSource" Width="190" DisplayMemberPath="DisplayName" SelectionChanged="CmbTnvSource_SelectionChanged"/>
+                            <Border Background="{DynamicResource HeaderBackground}" BorderBrush="{DynamicResource BorderBrushColor}" BorderThickness="1" CornerRadius="8" Padding="8,0" Margin="6,0,0,0" Height="32">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="Тнв: " FontSize="12" Foreground="{DynamicResource LabelSecondary}"/>
+                                    <TextBlock x:Name="TxtGlobalTnv" Text="—" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource AccentBlue}"/>
+                                    <TextBlock Text=" °C" FontSize="12" Foreground="{DynamicResource LabelSecondary}"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </StackPanel>
+                    
+                    <Button x:Name="BtnConnect" Content="Подключиться" Style="{StaticResource ApplePrimaryButton}" Click="BtnConnect_Click" VerticalAlignment="Bottom" Margin="0,0,0,10"/>
+                </WrapPanel>
             </Border>
 
             <!-- Переключение режимов -->
-            <!-- Оборачиваем табы в Viewbox для адаптивности -->
-            <Viewbox Grid.Row="1" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left" Margin="4,0,0,12">
-                <StackPanel Orientation="Horizontal">
-                    <RadioButton x:Name="TabAll" Content="Общий мониторинг" Style="{StaticResource TabNavButton}" IsChecked="True" Checked="TabMode_Checked"/>
-                    <RadioButton x:Name="TabSingle" Content="Мониторинг текущих" Style="{StaticResource TabNavButton}" Checked="TabMode_Checked"/>
-                    <RadioButton x:Name="TabDashboard" Content="Дашборд" Style="{StaticResource TabNavButton}" Checked="TabMode_Checked"/>
-                </StackPanel>
-            </Viewbox>
+            <WrapPanel Grid.Row="1" Margin="4,0,0,12">
+                <RadioButton x:Name="TabAll" Content="Общий мониторинг" Style="{StaticResource TabNavButton}" IsChecked="True" Checked="TabMode_Checked" Margin="0,0,6,6"/>
+                <RadioButton x:Name="TabSingle" Content="Мониторинг текущих" Style="{StaticResource TabNavButton}" Checked="TabMode_Checked" Margin="0,0,6,6"/>
+                <RadioButton x:Name="TabDashboard" Content="Дашборд" Style="{StaticResource TabNavButton}" Checked="TabMode_Checked" Margin="0,0,6,6"/>
+            </WrapPanel>
 
             <!-- Экран 1: Общий мониторинг точек -->
             <Grid x:Name="ViewGeneral" Grid.Row="2">
@@ -547,49 +531,26 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <!-- Панель инструментов внутри правой колонки оборачиваем в Viewbox для адаптивности -->
-                        <Viewbox Grid.Row="0" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left" Margin="2,0,0,12">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                
-                                <TextBlock Grid.Column="0" Text="Текущие параметры" FontWeight="SemiBold" FontSize="14" 
-                                           Foreground="{DynamicResource LabelPrimary}" VerticalAlignment="Center" Margin="0,0,20,0"/>
-                                
-                                <StackPanel Grid.Column="2" Orientation="Horizontal">
-                                    <Button x:Name="BtnSettings" Content="⚙ Настроить границы" 
-                                            Style="{StaticResource ApplePrimaryButton}" Background="{DynamicResource AccentGray}"
-                                            Margin="0,0,10,0" Click="BtnSettingsShared_Click"/>
-                                    
-                                    <Button x:Name="BtnStartMonitor" Content="Опросить выбранные" 
-                                            Style="{StaticResource AppleGreenButton}" 
-                                            Click="BtnStartMonitor_Click" IsEnabled="False"/>
-
-                                    <Button x:Name="BtnCancelMonitor" Content="✕ Отмена опроса" 
-                                            Style="{StaticResource AppleRedButton}" 
-                                            Margin="10,0,0,0" Visibility="Collapsed"
-                                            Click="BtnCancelMonitor_Click"/>
-                                </StackPanel>
-                            </Grid>
-                        </Viewbox>
+                        <!-- Панель инструментов внутри правой колонки с WrapPanel (адаптивная без уменьшения) -->
+                        <WrapPanel Grid.Row="0" Margin="2,0,0,12" VerticalAlignment="Center">
+                            <TextBlock Text="Текущие параметры" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource LabelPrimary}" VerticalAlignment="Center" Margin="0,0,20,10"/>
+                            <Button x:Name="BtnSettings" Content="⚙ Настроить границы" Style="{StaticResource ApplePrimaryButton}" Background="{DynamicResource AccentGray}" Margin="0,0,10,10" Click="BtnSettingsShared_Click"/>
+                            <Button x:Name="BtnStartMonitor" Content="Опросить выбранные" Style="{StaticResource AppleGreenButton}" Margin="0,0,10,10" Click="BtnStartMonitor_Click" IsEnabled="False"/>
+                            <Button x:Name="BtnCancelMonitor" Content="✕ Отмена опроса" Style="{StaticResource AppleRedButton}" Margin="0,0,0,10" Visibility="Collapsed" Click="BtnCancelMonitor_Click"/>
+                        </WrapPanel>
                         
-                        <Viewbox Grid.Row="1" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left" Margin="0,0,0,12">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="Колонки:" FontSize="12" Foreground="{DynamicResource LabelSecondary}" Margin="0,0,12,0" VerticalAlignment="Center"/>
-                                <CheckBox Content="T1" IsChecked="True" Click="ColumnToggle_Click"/>
-                                <CheckBox Content="T2" IsChecked="True" Click="ColumnToggle_Click"/>
-                                <CheckBox Content="P1" IsChecked="True" Click="ColumnToggle_Click"/>
-                                <CheckBox Content="P2" IsChecked="False" Click="ColumnToggle_Click"/>
-                                <CheckBox Content="V1" IsChecked="True" Click="ColumnToggle_Click"/>
-                                <CheckBox Content="V2" IsChecked="False" Click="ColumnToggle_Click"/>
-                                <CheckBox Content="M1" IsChecked="True" Click="ColumnToggle_Click"/>
-                                <CheckBox Content="M2" IsChecked="True" Click="ColumnToggle_Click"/>
-                                <CheckBox Content="Q"  IsChecked="True" Margin="0" Click="ColumnToggle_Click"/>
-                            </StackPanel>
-                        </Viewbox>
+                        <WrapPanel Grid.Row="1" Margin="0,0,0,12" VerticalAlignment="Center">
+                            <TextBlock Text="Колонки:" FontSize="12" Foreground="{DynamicResource LabelSecondary}" Margin="0,0,12,6" VerticalAlignment="Center"/>
+                            <CheckBox Content="T1" IsChecked="True" Margin="0,0,12,6" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="T2" IsChecked="True" Margin="0,0,12,6" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="P1" IsChecked="True" Margin="0,0,12,6" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="P2" IsChecked="False" Margin="0,0,12,6" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="V1" IsChecked="True" Margin="0,0,12,6" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="V2" IsChecked="False" Margin="0,0,12,6" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="M1" IsChecked="True" Margin="0,0,12,6" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="M2" IsChecked="True" Margin="0,0,12,6" Click="ColumnToggle_Click"/>
+                            <CheckBox Content="Q"  IsChecked="True" Margin="0,0,12,6" Click="ColumnToggle_Click"/>
+                        </WrapPanel>
 
                         <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{DynamicResource BorderBrushColor}" BorderThickness="1">
                             <DataGrid x:Name="GridResults" AutoGenerateColumns="False" IsReadOnly="True">
@@ -643,24 +604,21 @@
                     <Border.Effect><DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/></Border.Effect>
                     <Grid>
                         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                        <Viewbox Grid.Row="0" Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left" Margin="0,0,0,16">
-                            <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="Точка учёта:" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    <ComboBox x:Name="CmbTrendPoint" Width="380" DisplayMemberPath="DisplayName"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,0,0">
-                                    <TextBlock Text="Длительность (мин):" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    <ComboBox x:Name="CmbTrendDuration" Width="65"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="20,0,0,0">
-                                    <Button x:Name="BtnClearTrend" Content="Очистить историю" Style="{StaticResource AppleGhostButton}" Margin="0,0,14,0" Click="BtnClearTrend_Click"/>
-                                    <Button x:Name="BtnStartTrend" Content="▶ Запустить мониторинг" Style="{StaticResource AppleGreenButton}" Click="BtnStartTrend_Click"/>
-                                    <Button x:Name="BtnStopTrend" Content="⏹ Отмена / Стоп" Style="{StaticResource AppleRedButton}" Visibility="Collapsed" Click="BtnStopTrend_Click"/>
-                                </StackPanel>
-                            </Grid>
-                        </Viewbox>
+                        <WrapPanel Grid.Row="0" Margin="0,0,0,16" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,20,10">
+                                <TextBlock Text="Точка учёта:" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ComboBox x:Name="CmbTrendPoint" Width="380" DisplayMemberPath="DisplayName"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,20,10">
+                                <TextBlock Text="Длительность (мин):" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ComboBox x:Name="CmbTrendDuration" Width="65"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,10">
+                                <Button x:Name="BtnClearTrend" Content="Очистить историю" Style="{StaticResource AppleGhostButton}" Margin="0,0,14,0" Click="BtnClearTrend_Click"/>
+                                <Button x:Name="BtnStartTrend" Content="▶ Запустить мониторинг" Style="{StaticResource AppleGreenButton}" Click="BtnStartTrend_Click"/>
+                                <Button x:Name="BtnStopTrend" Content="⏹ Отмена / Стоп" Style="{StaticResource AppleRedButton}" Margin="14,0,0,0" Visibility="Collapsed" Click="BtnStopTrend_Click"/>
+                            </StackPanel>
+                        </WrapPanel>
                         <Border Grid.Row="1" CornerRadius="10" ClipToBounds="True" BorderBrush="{DynamicResource BorderBrushColor}" BorderThickness="1">
                             <DataGrid x:Name="GridTrend" AutoGenerateColumns="False" IsReadOnly="True">
                                 <DataGrid.Columns>
@@ -758,44 +716,34 @@
                         <!-- Панель управления дашбордом -->
                         <Border Grid.Row="0" Background="{DynamicResource CardBackground}" CornerRadius="14" Padding="14" Margin="0,0,0,16">
                             <Border.Effect><DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/></Border.Effect>
-                            <!-- Используем Viewbox, чтобы при узком экране верхняя панель дашборда уменьшалась, а не обрезалась -->
-                            <Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    
-                                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="Автоопрос (мин):" FontSize="13" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                        <ComboBox x:Name="CmbDashboardInterval" Width="65" VerticalAlignment="Center"/>
-                                    </StackPanel>
+                            <!-- Убрали Viewbox, используем WrapPanel для адаптивного переноса кнопок на новую строку без их уменьшения -->
+                            <WrapPanel VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,20,10">
+                                    <TextBlock Text="Автоопрос (мин):" FontSize="13" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <ComboBox x:Name="CmbDashboardInterval" Width="65" VerticalAlignment="Center"/>
+                                </StackPanel>
 
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
-                                        <TextBlock Text="Показать:" FontSize="12" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                        <CheckBox x:Name="ChkDashT" Content="T" IsChecked="True" Click="DashFilter_Click"/>
-                                        <CheckBox x:Name="ChkDashP" Content="P" IsChecked="True" Click="DashFilter_Click"/>
-                                        <CheckBox x:Name="ChkDashV" Content="V" IsChecked="True" Click="DashFilter_Click"/>
-                                        <CheckBox x:Name="ChkDashM" Content="M" IsChecked="True" Click="DashFilter_Click"/>
-                                        <CheckBox x:Name="ChkDashQ" Content="Q" IsChecked="True" Margin="0" Click="DashFilter_Click"/>
-                                    </StackPanel>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,20,10">
+                                    <TextBlock Text="Показать:" FontSize="12" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <CheckBox x:Name="ChkDashT" Content="T" IsChecked="True" Click="DashFilter_Click"/>
+                                    <CheckBox x:Name="ChkDashP" Content="P" IsChecked="True" Click="DashFilter_Click"/>
+                                    <CheckBox x:Name="ChkDashV" Content="V" IsChecked="True" Click="DashFilter_Click"/>
+                                    <CheckBox x:Name="ChkDashM" Content="M" IsChecked="True" Click="DashFilter_Click"/>
+                                    <CheckBox x:Name="ChkDashQ" Content="Q" IsChecked="True" Margin="0" Click="DashFilter_Click"/>
+                                </StackPanel>
 
-                                    <!-- Масштаб ТОЛЬКО плиток -->
-                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0,0,0">
-                                        <TextBlock Text="Масштаб карточек:" FontSize="12" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                        <Slider x:Name="SldUiScale" Width="90" Minimum="0.6" Maximum="1.6" Value="1.0" TickFrequency="0.05" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
-                                    </StackPanel>
+                                <!-- Масштаб ТОЛЬКО карточек -->
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,20,10">
+                                    <TextBlock Text="Масштаб карточек:" FontSize="12" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <Slider x:Name="SldUiScale" Width="90" Minimum="0.6" Maximum="1.6" Value="1.0" TickFrequency="0.05" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
+                                </StackPanel>
 
-                                    <StackPanel Grid.Column="4" Orientation="Horizontal" Margin="20,0,0,0">
-                                        <Button x:Name="BtnSettingsDashboard" Content="⚙ Настроить границы" Style="{StaticResource ApplePrimaryButton}" Background="{DynamicResource AccentGray}" Margin="0,0,10,0" Click="BtnSettingsShared_Click"/>
-                                        <Button x:Name="BtnStartDashboard" Content="▶ Запустить автоопрос" Style="{StaticResource AppleGreenButton}" Click="BtnStartDashboard_Click" IsEnabled="False"/>
-                                        <Button x:Name="BtnStopDashboard" Content="⏹ Остановить" Style="{StaticResource AppleRedButton}" Margin="10,0,0,0" Visibility="Collapsed" Click="BtnStopDashboard_Click"/>
-                                    </StackPanel>
-                                </Grid>
-                            </Viewbox>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,10">
+                                    <Button x:Name="BtnSettingsDashboard" Content="⚙ Настроить границы" Style="{StaticResource ApplePrimaryButton}" Background="{DynamicResource AccentGray}" Margin="0,0,10,0" Click="BtnSettingsShared_Click"/>
+                                    <Button x:Name="BtnStartDashboard" Content="▶ Запустить автоопрос" Style="{StaticResource AppleGreenButton}" Margin="0,0,10,0" Click="BtnStartDashboard_Click" IsEnabled="False"/>
+                                    <Button x:Name="BtnStopDashboard" Content="⏹ Остановить" Style="{StaticResource AppleRedButton}" Margin="0,0,0,0" Visibility="Collapsed" Click="BtnStopDashboard_Click"/>
+                                </StackPanel>
+                            </WrapPanel>
                         </Border>
                         
                         <!-- Одиночный режим (Плитки параметров) -->
@@ -897,7 +845,8 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <!-- Карточка динамического размера (VerticalAlignment="Top", отсутствие фиксированной ширины) -->
-                                        <Border VerticalAlignment="Top" Background="{Binding TileBackground}" CornerRadius="8" Margin="0,0,8,8" Padding="8">
+                                        <!-- Добавлен HorizontalAlignment="Left", чтобы карточка не растягивалась в WrapPanel, а принимала свой натуральный размер -->
+                                        <Border VerticalAlignment="Top" HorizontalAlignment="Left" Background="{Binding TileBackground}" CornerRadius="8" Margin="0,0,8,8" Padding="8">
                                             <Border.Effect>
                                                 <DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.1" Color="#000000"/>
                                             </Border.Effect>
