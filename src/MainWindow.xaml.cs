@@ -66,7 +66,10 @@ namespace LersMonitor
 
         public MainWindow()
         {
+            System.Net.ServicePointManager.DefaultConnectionLimit = 1000;
             InitializeComponent();
+            _http.Timeout = TimeSpan.FromMinutes(10);
+            
             GridResults.ItemsSource = _results;
             GridTrend.ItemsSource = _trendHistory;
             ItemsDashboard.ItemsSource = _dashboardNodes;
@@ -375,7 +378,9 @@ namespace LersMonitor
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка подключения:\n\n{ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Ошибка подключения:
+
+{ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
                 TxtStatus.Text = "Ошибка подключения";
             }
             finally { BtnConnect.IsEnabled = true; }
@@ -465,16 +470,14 @@ namespace LersMonitor
                 var pt = _allPoints.FirstOrDefault(p => p.Id == vm.Id);
                 if (pt == null) return;
                 
-                vm.Status = "Внеочередной опрос...";
-                vm.RefreshColors();
-
-                var pointsToPoll = new List<MeasurePointItem> { pt };
+                vm.Status = "Внеочередной опрос точки...";
+                
                 CancellationToken token = _dashboardCts?.Token ?? new CancellationTokenSource().Token;
                 
                 _ = Task.Run(async () => {
                     try {
                         var progress = new Progress<string>();
-                        await RunSmartPollingIterationAsync(pointsToPoll, _dashboardFlatPoints, progress, token);
+                        await RunSmartPollingIterationAsync(new List<MeasurePointItem> { pt }, _dashboardFlatPoints.Contains(vm) ? _dashboardFlatPoints : _results, progress, token);
                     } catch {}
                 });
             }
@@ -772,100 +775,96 @@ namespace LersMonitor
             }));
 
             progress.Report("Запуск опроса оборудования...");
-            var groups = selectedPoints.GroupBy(p => p.NodeTitle).ToList();
 
-            var pollingTasks = groups.Select(async grp =>
+            var pollingTasks = selectedPoints.Select(async pt =>
             {
                 if (_dashboardNodes.Any()) 
                 {
-                    var nodeVm = _dashboardNodes.FirstOrDefault(n => n.NodeTitle == grp.Key);
+                    var nodeVm = _dashboardNodes.FirstOrDefault(n => n.NodeTitle == pt.NodeTitle);
                     if (nodeVm != null && nodeVm.IsPaused) return; 
                 }
 
-                foreach (var pt in grp)
+                if (token.IsCancellationRequested) return;
+                
+                var vm = targetCollection.FirstOrDefault(r => r.Id == pt.Id);
+                if (vm == null) return;
+
+                initialTimes.TryGetValue(pt.Id, out var timeBefore);
+                
+                var (isNew, _) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
+                if (isNew) { vm.Status = "Опрошено успешно"; return; }
+
+                int postCooldown = 0; 
+                bool pointFinished = false; 
+                string lastError = "Нет ответа от прибора";
+
+                for (int attempt = 1; attempt <= 60; attempt++) 
                 {
                     if (token.IsCancellationRequested) break;
-                    var vm = targetCollection.FirstOrDefault(r => r.Id == pt.Id);
-                    if (vm == null) continue;
-
-                    initialTimes.TryGetValue(pt.Id, out var timeBefore);
                     
-                    var (isNew, _) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
-                    if (isNew) { vm.Status = "Опрошено успешно"; continue; }
+                    var (isNewWait, _) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
+                    if (isNewWait) 
+                    { 
+                        vm.Status = "Опрошено успешно"; 
+                        pointFinished = true; 
+                        break; 
+                    }
 
-                    int postCooldown = 0; 
-                    bool pointFinished = false; 
-                    string lastError = "Нет ответа от прибора";
-
-                    for (int attempt = 1; attempt <= 60; attempt++) 
+                    if (postCooldown <= 0)
                     {
-                        if (token.IsCancellationRequested) break;
-                        
-                        var (isNewWait, _) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
-                        if (isNewWait) 
-                        { 
-                            vm.Status = "Опрошено успешно"; 
-                            pointFinished = true; 
-                            break; 
-                        }
-
-                        if (postCooldown <= 0)
+                        try
                         {
-                            try
+                            var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{pt.Id}/Currents?once=true");
+                            pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
+                            var pollRes = await _http.SendAsync(pollReq, token);
+                            
+                            if (pollRes.IsSuccessStatusCode) 
+                            { 
+                                postCooldown = 10;
+                                vm.Status = $"Идёт опрос прибора... [{attempt}/60]";
+                            }
+                            else 
                             {
-                                var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{pt.Id}/Currents?once=true");
-                                pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
-                                var pollRes = await _http.SendAsync(pollReq, token);
+                                string errStr = await pollRes.Content.ReadAsStringAsync(token);
+                                int code = (int)pollRes.StatusCode;
+                                lastError = ParseLersError(errStr, code);
                                 
-                                if (pollRes.IsSuccessStatusCode) 
-                                { 
-                                    // Повторный пинок через 10 циклов (30 сек), если прибор на GPRS/Ethernet не отдал данные с первого раза
-                                    postCooldown = 10;
-                                    vm.Status = $"Идёт опрос прибора... [{attempt}/60]";
+                                if (code == 409 || code == 423 || 
+                                    lastError.IndexOf("занят", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    lastError.IndexOf("already", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    lastError.IndexOf("используется", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                    lastError.IndexOf("ожидани", StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    postCooldown = 3; 
+                                    vm.Status = $"Ожидание канала... [{attempt}/60]";
                                 }
                                 else 
                                 {
-                                    string errStr = await pollRes.Content.ReadAsStringAsync(token);
-                                    int code = (int)pollRes.StatusCode;
-                                    lastError = ParseLersError(errStr, code);
-                                    
-                                    if (code == 409 || code == 423 || 
-                                        lastError.IndexOf("занят", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                        lastError.IndexOf("already", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                        lastError.IndexOf("используется", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                        lastError.IndexOf("ожидани", StringComparison.OrdinalIgnoreCase) >= 0)
-                                    {
-                                        postCooldown = 3; 
-                                        vm.Status = $"Ожидание канала... [{attempt}/60]";
-                                    }
-                                    else 
-                                    {
-                                        postCooldown = 2; 
-                                        vm.Status = $"Повтор ({lastError}) [{attempt}/60]";
-                                    }
+                                    postCooldown = 2; 
+                                    vm.Status = $"Повтор ({lastError}) [{attempt}/60]";
                                 }
                             }
-                            catch { 
-                                lastError = "Сбой сети"; 
-                                postCooldown = 2; 
-                                vm.Status = $"Сбой сети, повтор... [{attempt}/60]";
-                            }
                         }
-                        else
-                        {
-                            postCooldown--;
-                            if (vm.Status.Contains("Идёт опрос")) vm.Status = $"Идёт опрос прибора... [{attempt}/60]";
-                            else if (vm.Status.Contains("Ожидание канала")) vm.Status = $"Ожидание канала... [{attempt}/60]";
+                        catch { 
+                            lastError = "Сбой сети"; 
+                            postCooldown = 2; 
+                            vm.Status = $"Сбой сети, повтор... [{attempt}/60]";
                         }
-                        
-                        await Task.Delay(3000, token);
                     }
-
-                    if (!pointFinished && !token.IsCancellationRequested)
+                    else
                     {
-                        var (finalCheck, _) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
-                        vm.Status = finalCheck ? "Опрошено успешно" : $"Таймаут: {lastError}";
+                        postCooldown--;
+                        if (vm.Status.Contains("Идёт опрос")) vm.Status = $"Идёт опрос прибора... [{attempt}/60]";
+                        else if (vm.Status.Contains("Ожидание канала")) vm.Status = $"Ожидание канала... [{attempt}/60]";
                     }
+                    
+                    await Task.Delay(3000, token);
+                }
+
+                if (!pointFinished && !token.IsCancellationRequested)
+                {
+                    var (finalCheck, _) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
+                    vm.Status = finalCheck ? "Опрошено успешно" : $"Таймаут: {lastError}";
                 }
             });
             await Task.WhenAll(pollingTasks);
