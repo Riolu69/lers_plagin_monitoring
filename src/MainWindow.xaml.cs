@@ -419,10 +419,14 @@ namespace LersMonitor
                 {
                     TxtT1Min.Text = limits.T1Min?.ToString(); TxtT1Max.Text = limits.T1Max?.ToString();
                     TxtT2Min.Text = limits.T2Min?.ToString(); TxtT2Max.Text = limits.T2Max?.ToString();
+                    TxtT3Min.Text = limits.T3Min?.ToString(); TxtT3Max.Text = limits.T3Max?.ToString();
                     TxtP1Min.Text = limits.P1Min?.ToString(); TxtP1Max.Text = limits.P1Max?.ToString();
                     TxtP2Min.Text = limits.P2Min?.ToString(); TxtP2Max.Text = limits.P2Max?.ToString();
                     TxtV1Min.Text = limits.V1Min?.ToString(); TxtV1Max.Text = limits.V1Max?.ToString();
                     TxtV2Min.Text = limits.V2Min?.ToString(); TxtV2Max.Text = limits.V2Max?.ToString();
+                    TxtM1Min.Text = limits.M1Min?.ToString(); TxtM1Max.Text = limits.M1Max?.ToString();
+                    TxtM2Min.Text = limits.M2Min?.ToString(); TxtM2Max.Text = limits.M2Max?.ToString();
+                    TxtQMin.Text = limits.QMin?.ToString(); TxtQMax.Text = limits.QMax?.ToString();
                 }
                 else ClearLimitsFields();
             }
@@ -440,10 +444,14 @@ namespace LersMonitor
         {
             TxtT1Min.Text = ""; TxtT1Max.Text = "";
             TxtT2Min.Text = ""; TxtT2Max.Text = "";
+            TxtT3Min.Text = ""; TxtT3Max.Text = "";
             TxtP1Min.Text = ""; TxtP1Max.Text = "";
             TxtP2Min.Text = ""; TxtP2Max.Text = "";
             TxtV1Min.Text = ""; TxtV1Max.Text = "";
             TxtV2Min.Text = ""; TxtV2Max.Text = "";
+            TxtM1Min.Text = ""; TxtM1Max.Text = "";
+            TxtM2Min.Text = ""; TxtM2Max.Text = "";
+            TxtQMin.Text = ""; TxtQMax.Text = "";
         }
 
         private void BtnCancelLimits_Click(object sender, RoutedEventArgs e)
@@ -458,10 +466,14 @@ namespace LersMonitor
 
             var t1Min = ParseDouble(TxtT1Min.Text); var t1Max = ParseDouble(TxtT1Max.Text);
             var t2Min = ParseDouble(TxtT2Min.Text); var t2Max = ParseDouble(TxtT2Max.Text);
+            var t3Min = ParseDouble(TxtT3Min.Text); var t3Max = ParseDouble(TxtT3Max.Text);
             var p1Min = ParseDouble(TxtP1Min.Text); var p1Max = ParseDouble(TxtP1Max.Text);
             var p2Min = ParseDouble(TxtP2Min.Text); var p2Max = ParseDouble(TxtP2Max.Text);
             var v1Min = ParseDouble(TxtV1Min.Text); var v1Max = ParseDouble(TxtV1Max.Text);
             var v2Min = ParseDouble(TxtV2Min.Text); var v2Max = ParseDouble(TxtV2Max.Text);
+            var m1Min = ParseDouble(TxtM1Min.Text); var m1Max = ParseDouble(TxtM1Max.Text);
+            var m2Min = ParseDouble(TxtM2Min.Text); var m2Max = ParseDouble(TxtM2Max.Text);
+            var qMin = ParseDouble(TxtQMin.Text); var qMax = ParseDouble(TxtQMax.Text);
 
             foreach (var point in _editingPoints)
             {
@@ -475,6 +487,8 @@ namespace LersMonitor
                 if (!string.IsNullOrWhiteSpace(TxtT1Max.Text)) limits.T1Max = t1Max;
                 if (!string.IsNullOrWhiteSpace(TxtT2Min.Text)) limits.T2Min = t2Min;
                 if (!string.IsNullOrWhiteSpace(TxtT2Max.Text)) limits.T2Max = t2Max;
+                if (!string.IsNullOrWhiteSpace(TxtT3Min.Text)) limits.T3Min = t3Min;
+                if (!string.IsNullOrWhiteSpace(TxtT3Max.Text)) limits.T3Max = t3Max;
                 if (!string.IsNullOrWhiteSpace(TxtP1Min.Text)) limits.P1Min = p1Min;
                 if (!string.IsNullOrWhiteSpace(TxtP1Max.Text)) limits.P1Max = p1Max;
                 if (!string.IsNullOrWhiteSpace(TxtP2Min.Text)) limits.P2Min = p2Min;
@@ -483,10 +497,18 @@ namespace LersMonitor
                 if (!string.IsNullOrWhiteSpace(TxtV1Max.Text)) limits.V1Max = v1Max;
                 if (!string.IsNullOrWhiteSpace(TxtV2Min.Text)) limits.V2Min = v2Min;
                 if (!string.IsNullOrWhiteSpace(TxtV2Max.Text)) limits.V2Max = v2Max;
+                if (!string.IsNullOrWhiteSpace(TxtM1Min.Text)) limits.M1Min = m1Min;
+                if (!string.IsNullOrWhiteSpace(TxtM1Max.Text)) limits.M1Max = m1Max;
+                if (!string.IsNullOrWhiteSpace(TxtM2Min.Text)) limits.M2Min = m2Min;
+                if (!string.IsNullOrWhiteSpace(TxtM2Max.Text)) limits.M2Max = m2Max;
+                if (!string.IsNullOrWhiteSpace(TxtQMin.Text)) limits.QMin = qMin;
+                if (!string.IsNullOrWhiteSpace(TxtQMax.Text)) limits.QMax = qMax;
 
+                // Обновляем VM на первой вкладке
                 var vm = _results.FirstOrDefault(r => r.Id == point.Id);
                 if (vm != null) { vm.Limits = limits; vm.RefreshColors(); }
                 
+                // Обновляем VM на дашборде
                 var vmDash = _dashboardFlatPoints.FirstOrDefault(r => r.Id == point.Id);
                 if (vmDash != null) { vmDash.Limits = limits; vmDash.RefreshColors(); }
             }
@@ -1013,18 +1035,16 @@ namespace LersMonitor
 
     public class PointThresholds
     {
-        public double? T1Min { get; set; }
-        public double? T1Max { get; set; }
-        public double? T2Min { get; set; }
-        public double? T2Max { get; set; }
-        public double? P1Min { get; set; }
-        public double? P1Max { get; set; }
-        public double? P2Min { get; set; }
-        public double? P2Max { get; set; }
-        public double? V1Min { get; set; }
-        public double? V1Max { get; set; }
-        public double? V2Min { get; set; }
-        public double? V2Max { get; set; }
+        public double? T1Min { get; set; } public double? T1Max { get; set; }
+        public double? T2Min { get; set; } public double? T2Max { get; set; }
+        public double? T3Min { get; set; } public double? T3Max { get; set; }
+        public double? P1Min { get; set; } public double? P1Max { get; set; }
+        public double? P2Min { get; set; } public double? P2Max { get; set; }
+        public double? V1Min { get; set; } public double? V1Max { get; set; }
+        public double? V2Min { get; set; } public double? V2Max { get; set; }
+        public double? M1Min { get; set; } public double? M1Max { get; set; }
+        public double? M2Min { get; set; } public double? M2Max { get; set; }
+        public double? QMin { get; set; } public double? QMax { get; set; }
     }
 
     public class UserSettings
@@ -1096,24 +1116,36 @@ namespace LersMonitor
         {
             OnPropertyChanged(nameof(T1Color));
             OnPropertyChanged(nameof(T2Color));
+            OnPropertyChanged(nameof(T3Color));
             OnPropertyChanged(nameof(P1Color));
             OnPropertyChanged(nameof(P2Color));
             OnPropertyChanged(nameof(V1Color));
             OnPropertyChanged(nameof(V2Color));
+            OnPropertyChanged(nameof(M1Color));
+            OnPropertyChanged(nameof(M2Color));
+            OnPropertyChanged(nameof(QColor));
             
             OnPropertyChanged(nameof(T1DashBg));
             OnPropertyChanged(nameof(T2DashBg));
+            OnPropertyChanged(nameof(T3DashBg));
             OnPropertyChanged(nameof(P1DashBg));
             OnPropertyChanged(nameof(P2DashBg));
             OnPropertyChanged(nameof(V1DashBg));
             OnPropertyChanged(nameof(V2DashBg));
+            OnPropertyChanged(nameof(M1DashBg));
+            OnPropertyChanged(nameof(M2DashBg));
+            OnPropertyChanged(nameof(QDashBg));
 
             OnPropertyChanged(nameof(T1DashForeground));
             OnPropertyChanged(nameof(T2DashForeground));
+            OnPropertyChanged(nameof(T3DashForeground));
             OnPropertyChanged(nameof(P1DashForeground));
             OnPropertyChanged(nameof(P2DashForeground));
             OnPropertyChanged(nameof(V1DashForeground));
             OnPropertyChanged(nameof(V2DashForeground));
+            OnPropertyChanged(nameof(M1DashForeground));
+            OnPropertyChanged(nameof(M2DashForeground));
+            OnPropertyChanged(nameof(QDashForeground));
 
             OnPropertyChanged(nameof(SingleStatusColor));
         }
@@ -1121,10 +1153,14 @@ namespace LersMonitor
         [System.Text.Json.Serialization.JsonIgnore]
         public bool HasBreach => IsBreached(T1, Limits?.T1Min, Limits?.T1Max) ||
                                  IsBreached(T2, Limits?.T2Min, Limits?.T2Max) ||
+                                 IsBreached(T3, Limits?.T3Min, Limits?.T3Max) ||
                                  IsBreached(P1, Limits?.P1Min, Limits?.P1Max) ||
                                  IsBreached(P2, Limits?.P2Min, Limits?.P2Max) ||
                                  IsBreached(V1, Limits?.V1Min, Limits?.V1Max) ||
-                                 IsBreached(V2, Limits?.V2Min, Limits?.V2Max);
+                                 IsBreached(V2, Limits?.V2Min, Limits?.V2Max) ||
+                                 IsBreached(M1, Limits?.M1Min, Limits?.M1Max) ||
+                                 IsBreached(M2, Limits?.M2Min, Limits?.M2Max) ||
+                                 IsBreached(Q, Limits?.QMin, Limits?.QMax);
 
         [System.Text.Json.Serialization.JsonIgnore]
         public bool HasError => !string.IsNullOrEmpty(Status) && (Status.Contains("Таймаут") || Status.Contains("Отказ") || Status.Contains("Сбой") || Status.Contains("Ошибка"));
@@ -1162,6 +1198,8 @@ namespace LersMonitor
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush T2DashBg => GetDashBg(T2, Limits?.T2Min, Limits?.T2Max);
         [System.Text.Json.Serialization.JsonIgnore]
+        public Brush T3DashBg => GetDashBg(T3, Limits?.T3Min, Limits?.T3Max);
+        [System.Text.Json.Serialization.JsonIgnore]
         public Brush P1DashBg => GetDashBg(P1, Limits?.P1Min, Limits?.P1Max);
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush P2DashBg => GetDashBg(P2, Limits?.P2Min, Limits?.P2Max);
@@ -1169,12 +1207,20 @@ namespace LersMonitor
         public Brush V1DashBg => GetDashBg(V1, Limits?.V1Min, Limits?.V1Max);
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush V2DashBg => GetDashBg(V2, Limits?.V2Min, Limits?.V2Max);
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush M1DashBg => GetDashBg(M1, Limits?.M1Min, Limits?.M1Max);
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush M2DashBg => GetDashBg(M2, Limits?.M2Min, Limits?.M2Max);
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush QDashBg => GetDashBg(Q, Limits?.QMin, Limits?.QMax);
 
         // --- ЦВЕТ ТЕКСТА ДЛЯ ПАРАМЕТРОВ ВО МНОЖЕСТВЕННОМ РЕЖИМЕ ---
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush T1DashForeground => IsBreached(T1, Limits?.T1Min, Limits?.T1Max) ? Brushes.Yellow : Brushes.White;
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush T2DashForeground => IsBreached(T2, Limits?.T2Min, Limits?.T2Max) ? Brushes.Yellow : Brushes.White;
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush T3DashForeground => IsBreached(T3, Limits?.T3Min, Limits?.T3Max) ? Brushes.Yellow : Brushes.White;
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush P1DashForeground => IsBreached(P1, Limits?.P1Min, Limits?.P1Max) ? Brushes.Yellow : Brushes.White;
         [System.Text.Json.Serialization.JsonIgnore]
@@ -1183,6 +1229,12 @@ namespace LersMonitor
         public Brush V1DashForeground => IsBreached(V1, Limits?.V1Min, Limits?.V1Max) ? Brushes.Yellow : Brushes.White;
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush V2DashForeground => IsBreached(V2, Limits?.V2Min, Limits?.V2Max) ? Brushes.Yellow : Brushes.White;
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush M1DashForeground => IsBreached(M1, Limits?.M1Min, Limits?.M1Max) ? Brushes.Yellow : Brushes.White;
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush M2DashForeground => IsBreached(M2, Limits?.M2Min, Limits?.M2Max) ? Brushes.Yellow : Brushes.White;
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush QDashForeground => IsBreached(Q, Limits?.QMin, Limits?.QMax) ? Brushes.Yellow : Brushes.White;
 
         [System.Text.Json.Serialization.JsonIgnore]
         public Brush SingleStatusColor
@@ -1222,7 +1274,9 @@ namespace LersMonitor
         public Brush T2Color => GetColor(T2, Limits?.T2Min, Limits?.T2Max);
         
         private double? _t3;
-        public double? T3 { get => _t3; set { _t3 = value; OnPropertyChanged(); OnPropertyChanged(nameof(SingleStatusColor)); } }
+        public double? T3 { get => _t3; set { _t3 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T3Color)); OnPropertyChanged(nameof(T3DashBg)); OnPropertyChanged(nameof(T3DashForeground)); OnPropertyChanged(nameof(SingleStatusColor)); } }
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush T3Color => GetColor(T3, Limits?.T3Min, Limits?.T3Max);
         
         private double? _p1;
         public double? P1 { get => _p1; set { _p1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(P1Color)); OnPropertyChanged(nameof(P1DashBg)); OnPropertyChanged(nameof(P1DashForeground)); } }
@@ -1245,13 +1299,19 @@ namespace LersMonitor
         public Brush V2Color => GetColor(V2, Limits?.V2Min, Limits?.V2Max);
         
         private double? _m1;
-        public double? M1 { get => _m1; set { _m1 = value; OnPropertyChanged(); } }
+        public double? M1 { get => _m1; set { _m1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(M1Color)); OnPropertyChanged(nameof(M1DashBg)); OnPropertyChanged(nameof(M1DashForeground)); OnPropertyChanged(nameof(SingleStatusColor)); } }
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush M1Color => GetColor(M1, Limits?.M1Min, Limits?.M1Max);
         
         private double? _m2;
-        public double? M2 { get => _m2; set { _m2 = value; OnPropertyChanged(); } }
+        public double? M2 { get => _m2; set { _m2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(M2Color)); OnPropertyChanged(nameof(M2DashBg)); OnPropertyChanged(nameof(M2DashForeground)); OnPropertyChanged(nameof(SingleStatusColor)); } }
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush M2Color => GetColor(M2, Limits?.M2Min, Limits?.M2Max);
         
         private double? _q;
-        public double? Q { get => _q; set { _q = value; OnPropertyChanged(); } }
+        public double? Q { get => _q; set { _q = value; OnPropertyChanged(); OnPropertyChanged(nameof(QColor)); OnPropertyChanged(nameof(QDashBg)); OnPropertyChanged(nameof(QDashForeground)); OnPropertyChanged(nameof(SingleStatusColor)); } }
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Brush QColor => GetColor(Q, Limits?.QMin, Limits?.QMax);
         
         private string _status = string.Empty;
         public string Status { get => _status; set { _status = value; OnPropertyChanged(); OnPropertyChanged(nameof(SingleStatusColor)); } }
