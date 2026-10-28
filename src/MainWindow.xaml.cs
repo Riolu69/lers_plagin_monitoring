@@ -458,6 +458,28 @@ namespace LersMonitor
             }
         }
 
+        private void BtnRetryPoint_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is PointResultViewModel vm)
+            {
+                var pt = _allPoints.FirstOrDefault(p => p.Id == vm.Id);
+                if (pt == null) return;
+                
+                vm.Status = "Внеочередной опрос...";
+                vm.RefreshColors();
+
+                var pointsToPoll = new List<MeasurePointItem> { pt };
+                CancellationToken token = _dashboardCts?.Token ?? new CancellationTokenSource().Token;
+                
+                _ = Task.Run(async () => {
+                    try {
+                        var progress = new Progress<string>();
+                        await RunSmartPollingIterationAsync(pointsToPoll, _dashboardFlatPoints, progress, token);
+                    } catch {}
+                });
+            }
+        }
+
         private void BtnToggleGeneral_Click(object sender, RoutedEventArgs e)
         {
             bool isVis = PanelGeneralLeft.Visibility == Visibility.Visible;
@@ -1150,10 +1172,10 @@ namespace LersMonitor
         
         public void Refresh() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(null));
 
-        public string ToggleIcon => IsPaused ? "✕" : "✓";
+        public string ToggleIcon => IsPaused ? "▶" : "✕";
         public Brush ToggleBg => IsPaused 
-            ? new SolidColorBrush(Color.FromArgb(210, 255, 59, 48))
-            : new SolidColorBrush(Color.FromArgb(180, 40, 167, 69));
+            ? new SolidColorBrush(Color.FromArgb(180, 40, 167, 69))
+            : new SolidColorBrush(Color.FromArgb(210, 255, 59, 48));
         public string ToggleTooltip => IsPaused 
             ? "Опрос объекта остановлен (нажмите, чтобы включить)" 
             : "Объект опрашивается (нажмите, чтобы остановить)";
@@ -1209,6 +1231,7 @@ namespace LersMonitor
             OnPropertyChanged(nameof(M1DashForeground)); OnPropertyChanged(nameof(M2DashForeground)); OnPropertyChanged(nameof(QDashForeground));
             OnPropertyChanged(nameof(SingleStatusColor));
             OnPropertyChanged(nameof(PointTitleColor));
+            OnPropertyChanged(nameof(RetryVisibility));
         }
 
         [System.Text.Json.Serialization.JsonIgnore]
@@ -1224,6 +1247,9 @@ namespace LersMonitor
 
         [System.Text.Json.Serialization.JsonIgnore]
         public bool IsWaiting => string.IsNullOrEmpty(Status) || Status.Contains("Ожидание") || Status.Contains("В очереди") || Status.Contains("Идёт");
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Visibility RetryVisibility => HasError ? Visibility.Visible : Visibility.Collapsed;
 
         private Brush GetColor(double? val, double? min, double? max)
         {
@@ -1380,6 +1406,6 @@ namespace LersMonitor
         private double? _q; public double? Q { get => _q; set { _q = value; OnPropertyChanged(); OnPropertyChanged(nameof(QColor)); OnPropertyChanged(nameof(QDashBg)); OnPropertyChanged(nameof(QDashForeground)); OnPropertyChanged(nameof(SingleStatusColor)); OnPropertyChanged(nameof(PointTitleColor)); } }
         [System.Text.Json.Serialization.JsonIgnore] public Brush QColor => GetColor(Q, Limits?.QMin, Limits?.QMax);
         
-        private string _status = string.Empty; public string Status { get => _status; set { _status = value; OnPropertyChanged(); OnPropertyChanged(nameof(SingleStatusColor)); OnPropertyChanged(nameof(PointTitleColor)); } }
+        private string _status = string.Empty; public string Status { get => _status; set { _status = value; OnPropertyChanged(); OnPropertyChanged(nameof(SingleStatusColor)); OnPropertyChanged(nameof(PointTitleColor)); OnPropertyChanged(nameof(RetryVisibility)); } }
     }
 }
