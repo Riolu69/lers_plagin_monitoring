@@ -483,7 +483,7 @@
                             
                             <StackPanel Grid.Column="2" Orientation="Horizontal">
                                 <Button x:Name="BtnSettings" Content="⚙ Настроить границы" 
-                                        Style="{StaticResource ApplePrimaryButton}" Background="#8E8E93"
+                                        Style="{StaticResource ApplePrimaryButton}" Background="{DynamicResource AccentGray}"
                                         Margin="0,0,10,0" Click="BtnSettingsShared_Click"/>
                                 
                                 <Button x:Name="BtnStartMonitor" Content="Опросить выбранные" 
@@ -875,7 +875,7 @@
                                                                             <TextBlock Text="T1 / T2" FontSize="11" Opacity="0.75" Foreground="{Binding DataContext.TileForeground, RelativeSource={RelativeSource AncestorType=Border, AncestorLevel=2}}"/>
                                                                             <TextBlock FontSize="14" FontWeight="Bold" Foreground="{Binding DataContext.TileForeground, RelativeSource={RelativeSource AncestorType=Border, AncestorLevel=2}}">
                                                                                 <Run Text="{Binding T1, StringFormat=\{0:F2\}, TargetNullValue='-'}" Foreground="{Binding T1DashForeground}"/>
-                                                                                <Run Text=" / " Opacity="0.5"/>
+                                                                                <Run Text=" / " Foreground="#80FFFFFF"/>
                                                                                 <Run Text="{Binding T2, StringFormat=\{0:F2\}, TargetNullValue='-'}" Foreground="{Binding T2DashForeground}"/>
                                                                             </TextBlock>
                                                                         </StackPanel>
@@ -884,7 +884,7 @@
                                                                             <TextBlock Text="P1 / P2" FontSize="11" Opacity="0.75" Foreground="{Binding DataContext.TileForeground, RelativeSource={RelativeSource AncestorType=Border, AncestorLevel=2}}"/>
                                                                             <TextBlock FontSize="14" FontWeight="Bold" Foreground="{Binding DataContext.TileForeground, RelativeSource={RelativeSource AncestorType=Border, AncestorLevel=2}}">
                                                                                 <Run Text="{Binding P1, StringFormat=\{0:F2\}, TargetNullValue='-'}" Foreground="{Binding P1DashForeground}"/>
-                                                                                <Run Text=" / " Opacity="0.5"/>
+                                                                                <Run Text=" / " Foreground="#80FFFFFF"/>
                                                                                 <Run Text="{Binding P2, StringFormat=\{0:F2\}, TargetNullValue='-'}" Foreground="{Binding P2DashForeground}"/>
                                                                             </TextBlock>
                                                                         </StackPanel>
@@ -898,7 +898,7 @@
                                                                             <TextBlock Text="V1 / V2" FontSize="11" Opacity="0.75" Foreground="{Binding DataContext.TileForeground, RelativeSource={RelativeSource AncestorType=Border, AncestorLevel=2}}"/>
                                                                             <TextBlock FontSize="14" FontWeight="Bold" Foreground="{Binding DataContext.TileForeground, RelativeSource={RelativeSource AncestorType=Border, AncestorLevel=2}}">
                                                                                 <Run Text="{Binding V1, StringFormat=\{0:F3\}, TargetNullValue='-'}" Foreground="{Binding V1DashForeground}"/>
-                                                                                <Run Text=" / " Opacity="0.5"/>
+                                                                                <Run Text=" / " Foreground="#80FFFFFF"/>
                                                                                 <Run Text="{Binding V2, StringFormat=\{0:F3\}, TargetNullValue='-'}" Foreground="{Binding V2DashForeground}"/>
                                                                             </TextBlock>
                                                                         </StackPanel>
@@ -907,7 +907,7 @@
                                                                             <TextBlock Text="M1 / M2" FontSize="11" Opacity="0.75" Foreground="{Binding DataContext.TileForeground, RelativeSource={RelativeSource AncestorType=Border, AncestorLevel=2}}"/>
                                                                             <TextBlock FontSize="14" FontWeight="Bold" Foreground="{Binding DataContext.TileForeground, RelativeSource={RelativeSource AncestorType=Border, AncestorLevel=2}}">
                                                                                 <Run Text="{Binding M1, StringFormat=\{0:F3\}, TargetNullValue='-'}" />
-                                                                                <Run Text=" / " Opacity="0.5"/>
+                                                                                <Run Text=" / " Foreground="#80FFFFFF"/>
                                                                                 <Run Text="{Binding M2, StringFormat=\{0:F3\}, TargetNullValue='-'}" />
                                                                             </TextBlock>
                                                                         </StackPanel>
