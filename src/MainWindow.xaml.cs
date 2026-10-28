@@ -1222,7 +1222,7 @@ namespace LersMonitor
         public Brush T2Color => GetColor(T2, Limits?.T2Min, Limits?.T2Max);
         
         private double? _t3;
-        public double? T3 { get => _t3; set { _t3 = value; OnPropertyChanged(); OnPropertyChanged(nameof(TileBackground)); } }
+        public double? T3 { get => _t3; set { _t3 = value; OnPropertyChanged(); OnPropertyChanged(nameof(SingleStatusColor)); } }
         
         private double? _p1;
         public double? P1 { get => _p1; set { _p1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(P1Color)); OnPropertyChanged(nameof(P1DashBg)); OnPropertyChanged(nameof(P1DashForeground)); } }
@@ -1254,6 +1254,6 @@ namespace LersMonitor
         public double? Q { get => _q; set { _q = value; OnPropertyChanged(); } }
         
         private string _status = string.Empty;
-        public string Status { get => _status; set { _status = value; OnPropertyChanged(); OnPropertyChanged(nameof(TileBackground)); OnPropertyChanged(nameof(SingleStatusColor)); } }
+        public string Status { get => _status; set { _status = value; OnPropertyChanged(); OnPropertyChanged(nameof(SingleStatusColor)); } }
     }
 }
