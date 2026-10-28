@@ -458,15 +458,18 @@ namespace LersMonitor
             }
         }
 
-        
         private void BtnToggleGeneral_Click(object sender, RoutedEventArgs e)
         {
-            PanelGeneralLeft.Visibility = PanelGeneralLeft.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+            bool isVis = PanelGeneralLeft.Visibility == Visibility.Visible;
+            PanelGeneralLeft.Visibility = isVis ? Visibility.Collapsed : Visibility.Visible;
+            if (BtnToggleGenPanel != null) BtnToggleGenPanel.Content = isVis ? "▶" : "◀";
         }
 
         private void BtnToggleDashboard_Click(object sender, RoutedEventArgs e)
         {
-            PanelDashboardLeft.Visibility = PanelDashboardLeft.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+            bool isVis = PanelDashboardLeft.Visibility == Visibility.Visible;
+            PanelDashboardLeft.Visibility = isVis ? Visibility.Collapsed : Visibility.Visible;
+            if (BtnToggleDashPanel != null) BtnToggleDashPanel.Content = isVis ? "▶" : "◀";
         }
 
         private void ApplyFilters_Changed(object sender, RoutedEventArgs e) => ApplyFilters();
@@ -757,7 +760,6 @@ namespace LersMonitor
                     if (nodeVm != null && nodeVm.IsPaused) return; 
                 }
 
-                bool nodeHadAnySuccess = false;
                 foreach (var pt in grp)
                 {
                     if (token.IsCancellationRequested) break;
@@ -766,12 +768,12 @@ namespace LersMonitor
 
                     initialTimes.TryGetValue(pt.Id, out var timeBefore);
                     
-                    var (isNew, tNow) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
-                    if (isNew) { vm.Status = "Опрошено успешно"; nodeHadAnySuccess = true; continue; }
+                    var (isNew, _) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
+                    if (isNew) { vm.Status = "Опрошено успешно"; continue; }
 
                     int postCooldown = 0; 
                     bool pointFinished = false; 
-                    string lastError = "";
+                    string lastError = "Нет ответа от прибора";
 
                     for (int attempt = 1; attempt <= 60; attempt++) 
                     {
@@ -782,7 +784,6 @@ namespace LersMonitor
                         { 
                             vm.Status = "Опрошено успешно"; 
                             pointFinished = true; 
-                            nodeHadAnySuccess = true; 
                             break; 
                         }
 
@@ -796,7 +797,8 @@ namespace LersMonitor
                                 
                                 if (pollRes.IsSuccessStatusCode) 
                                 { 
-                                    postCooldown = 100;
+                                    // Повторный пинок через 10 циклов (30 сек), если прибор на GPRS/Ethernet не отдал данные с первого раза
+                                    postCooldown = 10;
                                     vm.Status = $"Идёт опрос прибора... [{attempt}/60]";
                                 }
                                 else 
@@ -811,19 +813,19 @@ namespace LersMonitor
                                         lastError.IndexOf("используется", StringComparison.OrdinalIgnoreCase) >= 0 ||
                                         lastError.IndexOf("ожидани", StringComparison.OrdinalIgnoreCase) >= 0)
                                     {
-                                        postCooldown = 5; 
-                                        vm.Status = $"Ожидание порта... [{attempt}/60]";
+                                        postCooldown = 3; 
+                                        vm.Status = $"Ожидание канала... [{attempt}/60]";
                                     }
                                     else 
                                     {
-                                        postCooldown = 3; 
-                                        vm.Status = $"В очереди: {lastError} [{attempt}/60]";
+                                        postCooldown = 2; 
+                                        vm.Status = $"Повтор ({lastError}) [{attempt}/60]";
                                     }
                                 }
                             }
                             catch { 
                                 lastError = "Сбой сети"; 
-                                postCooldown = 3; 
+                                postCooldown = 2; 
                                 vm.Status = $"Сбой сети, повтор... [{attempt}/60]";
                             }
                         }
@@ -831,7 +833,7 @@ namespace LersMonitor
                         {
                             postCooldown--;
                             if (vm.Status.Contains("Идёт опрос")) vm.Status = $"Идёт опрос прибора... [{attempt}/60]";
-                            else if (vm.Status.Contains("Ожидание порта")) vm.Status = $"Ожидание порта... [{attempt}/60]";
+                            else if (vm.Status.Contains("Ожидание канала")) vm.Status = $"Ожидание канала... [{attempt}/60]";
                         }
                         
                         await Task.Delay(3000, token);
@@ -839,8 +841,8 @@ namespace LersMonitor
 
                     if (!pointFinished && !token.IsCancellationRequested)
                     {
-                        await TryFetchAndUpdateAsync(vm, timeBefore, token); 
-                        vm.Status = nodeHadAnySuccess ? "Таймаут (другая точка обновлена)" : $"Отказ: {lastError}";
+                        var (finalCheck, _) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
+                        vm.Status = finalCheck ? "Опрошено успешно" : $"Таймаут: {lastError}";
                     }
                 }
             });
@@ -1147,6 +1149,15 @@ namespace LersMonitor
         public bool IsPaused { get => _isPaused; set { _isPaused = value; Refresh(); } }
         
         public void Refresh() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(null));
+
+        public string ToggleIcon => IsPaused ? "✕" : "✓";
+        public Brush ToggleBg => IsPaused 
+            ? new SolidColorBrush(Color.FromArgb(210, 255, 59, 48))
+            : new SolidColorBrush(Color.FromArgb(180, 40, 167, 69));
+        public string ToggleTooltip => IsPaused 
+            ? "Опрос объекта остановлен (нажмите, чтобы включить)" 
+            : "Объект опрашивается (нажмите, чтобы остановить)";
+
         public Brush TileBackground
         {
             get
@@ -1238,15 +1249,12 @@ namespace LersMonitor
             {
                 var points = schedule.OrderBy(p => p.Tnv).ToList();
                 
-                // Если уличная Тнв точно совпадает с заданной в таблице (с небольшой погрешностью) — берем точные значения
                 var exact = points.FirstOrDefault(p => Math.Abs(p.Tnv - tnv.Value) < 0.2);
                 if (exact != null) return (exact.T1, exact.T2);
 
-                // Если вышли за пределы графика (слишком холодно или слишком тепло) — берем крайние точки
                 if (tnv.Value <= points.First().Tnv) return (points.First().T1, points.First().T2);
                 if (tnv.Value >= points.Last().Tnv) return (points.Last().T1, points.Last().T2);
 
-                // Линейная интерполяция между двумя БЛИЖАЙШИМИ заданными точками (соединяем отрезками)
                 for (int i = 0; i < points.Count - 1; i++)
                 {
                     if (tnv.Value >= points[i].Tnv && tnv.Value <= points[i+1].Tnv)
