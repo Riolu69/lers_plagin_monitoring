@@ -1164,6 +1164,16 @@ namespace LersMonitor
         public string NodeTitle { get; set; } = string.Empty;
         public ObservableCollection<PointResultViewModel> Points { get; } = new();
         
+        public int ColumnsCount 
+        {
+            get
+            {
+                if (Points.Count == 1) return 1;
+                if (Points.Count == 2) return 1;
+                return 2;
+            }
+        }
+        
         private bool _isPaused;
         public bool IsPaused { get => _isPaused; set { _isPaused = value; Refresh(); } }
         
