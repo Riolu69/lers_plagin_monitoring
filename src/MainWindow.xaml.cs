@@ -95,16 +95,20 @@ namespace LersMonitor
                         TxtLogin.Text = _settings.Login;
                         ChkRemember.IsChecked = _settings.RememberCredentials;
                         
-                        CmbTheme.SelectedIndex = _settings.ThemeMode;
                         TxtThemeLight.Text = _settings.TimeLightStr;
                         TxtThemeDark.Text = _settings.TimeDarkStr;
                         SldUiScale.Value = _settings.UiScale <= 0 ? 1.0 : _settings.UiScale;
 
                         if (!string.IsNullOrEmpty(_settings.PasswordBase64))
                         {
-                            var bytes = Convert.FromBase64String(_settings.PasswordBase64);
-                            TxtPassword.Password = Encoding.UTF8.GetString(bytes);
+                            try {
+                                var bytes = Convert.FromBase64String(_settings.PasswordBase64);
+                                TxtPassword.Password = Encoding.UTF8.GetString(bytes);
+                            } catch {}
                         }
+                        
+                        // Меняем тему в самом конце, так как она триггерит SaveUserSettings
+                        CmbTheme.SelectedIndex = _settings.ThemeMode;
                         
                         if (_settings.PointLimits == null) _settings.PointLimits = new Dictionary<int, PointThresholds>();
 
@@ -144,6 +148,13 @@ namespace LersMonitor
                     _settings.Port = p == 0 ? (ushort)10000 : p;
                     _settings.Login = TxtLogin.Text.Trim();
                     _settings.PasswordBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(TxtPassword.Password));
+                }
+                else
+                {
+                    _settings.Host = "localhost";
+                    _settings.Port = 10000;
+                    _settings.Login = "";
+                    _settings.PasswordBase64 = "";
                 }
 
                 _settings.ThemeMode = CmbTheme.SelectedIndex;
