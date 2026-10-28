@@ -411,8 +411,7 @@
                                 <CheckBox Content="V2" IsChecked="False" Click="ColumnToggle_Click"/>
                                 <CheckBox Content="M1" IsChecked="True" Click="ColumnToggle_Click"/>
                                 <CheckBox Content="M2" IsChecked="True" Click="ColumnToggle_Click"/>
-                                <CheckBox Content="Q"  IsChecked="True" Click="ColumnToggle_Click"/>
-                                <CheckBox Content="Tнв" IsChecked="True" Margin="0" Click="ColumnToggle_Click"/>
+                                <CheckBox Content="Q"  IsChecked="True" Margin="0" Click="ColumnToggle_Click"/>
                             </StackPanel>
 
                             <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{DynamicResource BorderBrushColor}" BorderThickness="1">
@@ -430,9 +429,6 @@
                                         </DataGridTextColumn>
                                         <DataGridTextColumn Header="T3 (°C)" Binding="{Binding T3, StringFormat=\{0:F1\}}" Width="65" Visibility="Collapsed">
                                             <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding T3Color}"/></Style></DataGridTextColumn.ElementStyle>
-                                        </DataGridTextColumn>
-                                        <DataGridTextColumn Header="Tнв (°C)" Binding="{Binding Tnv, StringFormat=\{0:F1\}}" Width="65">
-                                            <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding TnvColor}"/></Style></DataGridTextColumn.ElementStyle>
                                         </DataGridTextColumn>
                                         
                                         <DataGridTextColumn Header="P1 (атм)" Binding="{Binding P1, StringFormat=\{0:F1\}}" Width="65">
@@ -498,9 +494,6 @@
                                         </DataGridTextColumn>
                                         <DataGridTextColumn Header="T2 (°C)" Binding="{Binding T2, StringFormat=\{0:F1\}}" Width="70">
                                             <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding T2Color}"/></Style></DataGridTextColumn.ElementStyle>
-                                        </DataGridTextColumn>
-                                        <DataGridTextColumn Header="Tнв (°C)" Binding="{Binding Tnv, StringFormat=\{0:F1\}}" Width="70">
-                                            <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding TnvColor}"/></Style></DataGridTextColumn.ElementStyle>
                                         </DataGridTextColumn>
                                         <DataGridTextColumn Header="P1 (атм)" Binding="{Binding P1, StringFormat=\{0:F1\}}" Width="70">
                                             <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding P1Color}"/></Style></DataGridTextColumn.ElementStyle>
@@ -590,15 +583,20 @@
                                     <TextBlock Grid.Column="0" Text="Автоопрос каждые (мин):" FontSize="13" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                     <ComboBox x:Name="CmbDashboardInterval" Grid.Column="1" Width="70" VerticalAlignment="Center"/>
                                     
-                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                                    <WrapPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                                        <TextBlock Text="Источник Тнв:" FontSize="12" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <ComboBox x:Name="CmbTnvSource" Width="140" DisplayMemberPath="DisplayName" SelectionChanged="CmbTnvSource_SelectionChanged"/>
+                                        <TextBlock Text="Тнв:" FontSize="12" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="12,0,4,0"/>
+                                        <TextBlock x:Name="TxtGlobalTnv" Text="--" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource LabelPrimary}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="°C" FontSize="12" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="2,0,16,0"/>
+
                                         <TextBlock Text="Фильтр в плитках:" FontSize="12" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
                                         <CheckBox x:Name="ChkDashT" Content="T" IsChecked="True" Click="DashFilter_Click"/>
                                         <CheckBox x:Name="ChkDashP" Content="P" IsChecked="True" Click="DashFilter_Click"/>
                                         <CheckBox x:Name="ChkDashV" Content="V" IsChecked="True" Click="DashFilter_Click"/>
                                         <CheckBox x:Name="ChkDashM" Content="M" IsChecked="True" Click="DashFilter_Click"/>
-                                        <CheckBox x:Name="ChkDashQ" Content="Q" IsChecked="True" Click="DashFilter_Click"/>
-                                        <CheckBox x:Name="ChkDashTnv" Content="Tнв" IsChecked="True" Margin="0" Click="DashFilter_Click"/>
-                                    </StackPanel>
+                                        <CheckBox x:Name="ChkDashQ" Content="Q" IsChecked="True" Margin="0" Click="DashFilter_Click"/>
+                                    </WrapPanel>
 
                                     <StackPanel Grid.Column="3" Orientation="Horizontal">
                                         <Button x:Name="BtnSettingsDashboard" Content="⚙ Настроить границы" Style="{StaticResource ApplePrimaryButton}" Background="{DynamicResource AccentGray}" Margin="0,0,10,0" Click="BtnSettingsShared_Click"/>
@@ -620,7 +618,6 @@
                                     </StackPanel>
                                 </StackPanel>
                                 <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                                    <!-- МАСШТАБ только для плиток одиночного режима -->
                                     <WrapPanel ItemWidth="180" ItemHeight="110">
                                         <WrapPanel.LayoutTransform>
                                             <ScaleTransform ScaleX="{Binding Value, ElementName=SldUiScale}" ScaleY="{Binding Value, ElementName=SldUiScale}"/>
@@ -631,9 +628,6 @@
                                         </Border>
                                         <Border Background="{Binding T2DashBg}" CornerRadius="12" Margin="0,0,12,12" Padding="14">
                                             <Grid><TextBlock Text="T2 (°C)" Foreground="{Binding TileForeground}" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Top" Opacity="0.85"/><TextBlock Text="{Binding T2, StringFormat=\{0:F1\}, TargetNullValue='-'}" Foreground="{Binding TileForeground}" FontSize="32" FontWeight="Bold" VerticalAlignment="Bottom" HorizontalAlignment="Right"/></Grid>
-                                        </Border>
-                                        <Border Background="{Binding TnvDashBg}" CornerRadius="12" Margin="0,0,12,12" Padding="14">
-                                            <Grid><TextBlock Text="Tнв (°C)" Foreground="{Binding TileForeground}" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Top" Opacity="0.85"/><TextBlock Text="{Binding Tnv, StringFormat=\{0:F1\}, TargetNullValue='-'}" Foreground="{Binding TileForeground}" FontSize="32" FontWeight="Bold" VerticalAlignment="Bottom" HorizontalAlignment="Right"/></Grid>
                                         </Border>
                                         <Border Background="{Binding P1DashBg}" CornerRadius="12" Margin="0,0,12,12" Padding="14">
                                             <Grid><TextBlock Text="P1 (атм)" Foreground="{Binding TileForeground}" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Top" Opacity="0.85"/><TextBlock Text="{Binding P1, StringFormat=\{0:F1\}, TargetNullValue='-'}" Foreground="{Binding TileForeground}" FontSize="32" FontWeight="Bold" VerticalAlignment="Bottom" HorizontalAlignment="Right"/></Grid>
@@ -663,7 +657,6 @@
                             <!-- Множественный режим (Динамические Плитки) -->
                             <ScrollViewer x:Name="PanelMultiPoint" Grid.Row="1" VerticalScrollBarVisibility="Auto">
                                 <ItemsControl x:Name="ItemsDashboard">
-                                    <!-- МАСШТАБ только для плиток множественного режима -->
                                     <ItemsControl.LayoutTransform>
                                         <ScaleTransform ScaleX="{Binding Value, ElementName=SldUiScale}" ScaleY="{Binding Value, ElementName=SldUiScale}"/>
                                     </ItemsControl.LayoutTransform>
@@ -680,10 +673,45 @@
                                                 <Grid>
                                                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                                                     
-                                                    <StackPanel Grid.Row="0" Margin="0,0,0,4">
-                                                        <TextBlock Text="{Binding NodeTitle}" Foreground="{Binding TileForeground}" FontSize="12" FontWeight="Bold" TextWrapping="Wrap" ToolTip="{Binding NodeTitle}"/>
-                                                        <TextBlock Text="{Binding GeneralStatus}" Foreground="{Binding TileForeground}" FontSize="9" Opacity="0.85" Margin="0,1,0,0"/>
-                                                    </StackPanel>
+                                                    <Grid Grid.Row="0" Margin="0,0,0,6">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                                            <TextBlock Text="{Binding NodeTitle}" Foreground="{Binding TileForeground}" FontSize="12" FontWeight="Bold" TextWrapping="Wrap" ToolTip="{Binding NodeTitle}"/>
+                                                            <TextBlock Text="{Binding GeneralStatus}" Foreground="{Binding TileForeground}" FontSize="9" Opacity="0.85" Margin="0,1,0,0" TextWrapping="Wrap"/>
+                                                        </StackPanel>
+                                                        
+                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                                                            <Button Content="▶" Tag="{Binding}" Click="BtnNodeToggle_Click" ToolTip="Возобновить опрос">
+                                                                <Button.Style>
+                                                                    <Style TargetType="Button" BasedOn="{StaticResource AppleGhostButton}">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        <Setter Property="Foreground" Value="#C4F0C5"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Button.Style>
+                                                            </Button>
+                                                            <Button Content="✕" Tag="{Binding}" Click="BtnNodeToggle_Click" ToolTip="Остановить опрос объекта">
+                                                                <Button.Style>
+                                                                    <Style TargetType="Button" BasedOn="{StaticResource AppleGhostButton}">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                        <Setter Property="Foreground" Value="#FFB4B4"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Button.Style>
+                                                            </Button>
+                                                        </StackPanel>
+                                                    </Grid>
 
                                                     <ItemsControl Grid.Row="1" ItemsSource="{Binding Points}">
                                                         <ItemsControl.ItemTemplate>
@@ -700,10 +728,6 @@
                                                                                 <TextBlock FontSize="10" FontWeight="Bold" Foreground="{Binding DataContext.TileForeground, RelativeSource={RelativeSource AncestorType=Border, AncestorLevel=2}}">
                                                                                     <Run Text="{Binding T1, StringFormat=\{0:F1\}, TargetNullValue='-'}" Foreground="{Binding T1DashForeground}"/><Run Text="/" Foreground="#80FFFFFF"/><Run Text="{Binding T2, StringFormat=\{0:F1\}, TargetNullValue='-'}" Foreground="{Binding T2DashForeground}"/>
                                                                                 </TextBlock>
-                                                                            </StackPanel>
-                                                                            <StackPanel Margin="0,0,6,2" Visibility="{Binding Source={x:Static local:DashSettings.Instance}, Path=ShowTnv, Converter={StaticResource BoolToVis}}">
-                                                                                <TextBlock Text="Tнв" FontSize="8" Opacity="0.75" Foreground="{Binding DataContext.TileForeground, RelativeSource={RelativeSource AncestorType=Border, AncestorLevel=2}}"/>
-                                                                                <TextBlock Text="{Binding Tnv, StringFormat=\{0:F1\}, TargetNullValue='-'}" FontSize="10" FontWeight="Bold" Foreground="{Binding TnvDashForeground}"/>
                                                                             </StackPanel>
                                                                             <StackPanel Margin="0,0,6,2" Visibility="{Binding Source={x:Static local:DashSettings.Instance}, Path=ShowP, Converter={StaticResource BoolToVis}}">
                                                                                 <TextBlock Text="P1/P2" FontSize="8" Opacity="0.75" Foreground="{Binding DataContext.TileForeground, RelativeSource={RelativeSource AncestorType=Border, AncestorLevel=2}}"/>
@@ -783,10 +807,6 @@
                             <TextBlock Grid.Row="2" Grid.Column="0" Text="T2 (°C)" Foreground="{DynamicResource LabelPrimary}" VerticalAlignment="Center"/>
                             <TextBox x:Name="TxtT2Min" Grid.Row="2" Grid.Column="1" Margin="0,0,8,8"/>
                             <TextBox x:Name="TxtT2Max" Grid.Row="2" Grid.Column="2" Margin="0,0,0,8"/>
-
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="Tнв (°C)" Foreground="{DynamicResource LabelPrimary}" VerticalAlignment="Center"/>
-                            <TextBox x:Name="TxtTnvMin" Grid.Row="3" Grid.Column="1" Margin="0,0,8,8"/>
-                            <TextBox x:Name="TxtTnvMax" Grid.Row="3" Grid.Column="2" Margin="0,0,0,8"/>
                             
                             <TextBlock Grid.Row="4" Grid.Column="0" Text="P1 (атм)" Foreground="{DynamicResource LabelPrimary}" VerticalAlignment="Center"/>
                             <TextBox x:Name="TxtP1Min" Grid.Row="4" Grid.Column="1" Margin="0,0,8,8"/>

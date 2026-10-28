@@ -32,7 +32,6 @@ namespace LersMonitor
         private bool _showV = true; public bool ShowV { get => _showV; set { _showV = value; OnPropertyChanged(); } }
         private bool _showM = true; public bool ShowM { get => _showM; set { _showM = value; OnPropertyChanged(); } }
         private bool _showQ = true; public bool ShowQ { get => _showQ; set { _showQ = value; OnPropertyChanged(); } }
-        private bool _showTnv = true; public bool ShowTnv { get => _showTnv; set { _showTnv = value; OnPropertyChanged(); } }
     }
 
     public partial class MainWindow : Window
@@ -40,6 +39,8 @@ namespace LersMonitor
         private readonly HttpClient _http = new();
         private string? _token;
         private string _baseUrl = "";
+        
+        public static double? CurrentGlobalTnv { get; set; }
 
         private List<MeasurePointItem> _allPoints = new();
         private readonly ObservableCollection<PointResultViewModel> _results = new();
@@ -56,6 +57,7 @@ namespace LersMonitor
         private int _activeTrendPointId = 0;
         
         private DispatcherTimer _themeTimer;
+        private DispatcherTimer _globalTnvTimer;
 
         private static string SettingsFilePath =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LersMonitor", "settings.json");
@@ -75,6 +77,9 @@ namespace LersMonitor
 
             _themeTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
             _themeTimer.Tick += ThemeTimer_Tick;
+            
+            _globalTnvTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+            _globalTnvTimer.Tick += async (s, e) => await UpdateGlobalTnvAsync();
 
             LoadUserSettings();
         }
@@ -107,7 +112,6 @@ namespace LersMonitor
                             } catch {}
                         }
                         
-                        // Меняем тему в самом конце, так как она триггерит SaveUserSettings
                         CmbTheme.SelectedIndex = _settings.ThemeMode;
                         
                         if (_settings.PointLimits == null) _settings.PointLimits = new Dictionary<int, PointThresholds>();
@@ -176,6 +180,7 @@ namespace LersMonitor
             _generalMonitorCts?.Cancel();
             _dashboardCts?.Cancel();
             _themeTimer.Stop();
+            _globalTnvTimer.Stop();
             StopNativeLersTrend();
             SaveUserSettings();
             base.OnClosed(e);
@@ -347,6 +352,13 @@ namespace LersMonitor
 
                 CmbTrendPoint.ItemsSource = _allPoints;
                 if (_allPoints.Any()) CmbTrendPoint.SelectedIndex = 0;
+                
+                CmbTnvSource.ItemsSource = _allPoints;
+                if (_settings.TnvSourcePointId.HasValue) 
+                {
+                    CmbTnvSource.SelectedItem = _allPoints.FirstOrDefault(p => p.Id == _settings.TnvSourcePointId.Value);
+                }
+                _globalTnvTimer.Start();
 
                 ApplyFilters(); ApplyFiltersDashboard();
 
@@ -364,6 +376,60 @@ namespace LersMonitor
                 TxtStatus.Text = "Ошибка подключения";
             }
             finally { BtnConnect.IsEnabled = true; }
+        }
+
+        private async void CmbTnvSource_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (CmbTnvSource.SelectedItem is MeasurePointItem pt)
+            {
+                _settings.TnvSourcePointId = pt.Id;
+                SaveUserSettings();
+                TxtGlobalTnv.Text = "...";
+                await UpdateGlobalTnvAsync();
+            }
+        }
+        
+        private async Task UpdateGlobalTnvAsync()
+        {
+            if (CmbTnvSource.SelectedItem is MeasurePointItem pt)
+            {
+                try
+                {
+                    var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{pt.Id}/Consumption/Last");
+                    if (res.IsSuccessStatusCode)
+                    {
+                        var json = await res.Content.ReadAsStringAsync();
+                        if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
+                        {
+                            using var doc = JsonDocument.Parse(json);
+                            var tnv = ExtractParameterValue(doc.RootElement, "t_out_env", "t_nv", "T_nv", "outdoorTemp", "t_outdoor", "t_env");
+                            if (tnv.HasValue)
+                            {
+                                CurrentGlobalTnv = tnv;
+                                TxtGlobalTnv.Text = tnv.Value.ToString("F1");
+                                foreach (var p in _dashboardFlatPoints) p.RefreshColors();
+                                foreach (var p in _results) p.RefreshColors();
+                                foreach (var node in _dashboardNodes) node.Refresh();
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        private void BtnNodeToggle_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is DashboardNodeViewModel node)
+            {
+                node.IsPaused = !node.IsPaused;
+                foreach (var p in node.Points) 
+                {
+                    p.Status = node.IsPaused ? "Опрос приостановлен" : "Ожидание автоопроса...";
+                    p.RefreshColors();
+                }
+                node.Refresh();
+            }
         }
 
         private void ApplyFilters_Changed(object sender, RoutedEventArgs e) => ApplyFilters();
@@ -425,7 +491,6 @@ namespace LersMonitor
             DashSettings.Instance.ShowV = ChkDashV.IsChecked == true;
             DashSettings.Instance.ShowM = ChkDashM.IsChecked == true;
             DashSettings.Instance.ShowQ = ChkDashQ.IsChecked == true;
-            DashSettings.Instance.ShowTnv = ChkDashTnv.IsChecked == true;
         }
 
         private void BtnSettingsShared_Click(object sender, RoutedEventArgs e)
@@ -445,7 +510,6 @@ namespace LersMonitor
                 {
                     TxtT1Min.Text = limits.T1Min?.ToString(); TxtT1Max.Text = limits.T1Max?.ToString();
                     TxtT2Min.Text = limits.T2Min?.ToString(); TxtT2Max.Text = limits.T2Max?.ToString();
-                    TxtTnvMin.Text = limits.TnvMin?.ToString(); TxtTnvMax.Text = limits.TnvMax?.ToString();
                     TxtP1Min.Text = limits.P1Min?.ToString(); TxtP1Max.Text = limits.P1Max?.ToString();
                     TxtP2Min.Text = limits.P2Min?.ToString(); TxtP2Max.Text = limits.P2Max?.ToString();
                     TxtV1Min.Text = limits.V1Min?.ToString(); TxtV1Max.Text = limits.V1Max?.ToString();
@@ -469,7 +533,6 @@ namespace LersMonitor
         private void ClearLimitsFields()
         {
             TxtT1Min.Text = ""; TxtT1Max.Text = ""; TxtT2Min.Text = ""; TxtT2Max.Text = "";
-            TxtTnvMin.Text = ""; TxtTnvMax.Text = "";
             TxtP1Min.Text = ""; TxtP1Max.Text = ""; TxtP2Min.Text = ""; TxtP2Max.Text = "";
             TxtV1Min.Text = ""; TxtV1Max.Text = ""; TxtV2Min.Text = ""; TxtV2Max.Text = "";
             TxtM1Min.Text = ""; TxtM1Max.Text = ""; TxtM2Min.Text = ""; TxtM2Max.Text = "";
@@ -486,7 +549,6 @@ namespace LersMonitor
             if (!_editingPoints.Any()) return;
             var t1Min = ParseDouble(TxtT1Min.Text); var t1Max = ParseDouble(TxtT1Max.Text);
             var t2Min = ParseDouble(TxtT2Min.Text); var t2Max = ParseDouble(TxtT2Max.Text);
-            var tnvMin = ParseDouble(TxtTnvMin.Text); var tnvMax = ParseDouble(TxtTnvMax.Text);
             var p1Min = ParseDouble(TxtP1Min.Text); var p1Max = ParseDouble(TxtP1Max.Text);
             var p2Min = ParseDouble(TxtP2Min.Text); var p2Max = ParseDouble(TxtP2Max.Text);
             var v1Min = ParseDouble(TxtV1Min.Text); var v1Max = ParseDouble(TxtV1Max.Text);
@@ -502,7 +564,6 @@ namespace LersMonitor
 
                 if (!string.IsNullOrWhiteSpace(TxtT1Min.Text)) limits.T1Min = t1Min; if (!string.IsNullOrWhiteSpace(TxtT1Max.Text)) limits.T1Max = t1Max;
                 if (!string.IsNullOrWhiteSpace(TxtT2Min.Text)) limits.T2Min = t2Min; if (!string.IsNullOrWhiteSpace(TxtT2Max.Text)) limits.T2Max = t2Max;
-                if (!string.IsNullOrWhiteSpace(TxtTnvMin.Text)) limits.TnvMin = tnvMin; if (!string.IsNullOrWhiteSpace(TxtTnvMax.Text)) limits.TnvMax = tnvMax;
                 if (!string.IsNullOrWhiteSpace(TxtP1Min.Text)) limits.P1Min = p1Min; if (!string.IsNullOrWhiteSpace(TxtP1Max.Text)) limits.P1Max = p1Max;
                 if (!string.IsNullOrWhiteSpace(TxtP2Min.Text)) limits.P2Min = p2Min; if (!string.IsNullOrWhiteSpace(TxtP2Max.Text)) limits.P2Max = p2Max;
                 if (!string.IsNullOrWhiteSpace(TxtV1Min.Text)) limits.V1Min = v1Min; if (!string.IsNullOrWhiteSpace(TxtV1Max.Text)) limits.V1Max = v1Max;
@@ -532,7 +593,6 @@ namespace LersMonitor
         {
             vm.T1 = ExtractParameterValue(root, "t_in", "t1", "temperatureIn", "T1", "t1Value", "T_in", "t_supply");
             vm.T2 = ExtractParameterValue(root, "t_out", "t2", "temperatureOut", "T2", "t2Value", "T_out", "t_return");
-            vm.Tnv = ExtractParameterValue(root, "t_out_env", "t_nv", "T_nv", "outdoorTemp", "t_outdoor", "t_env");
             vm.P1 = ExtractParameterValue(root, "p_in", "p1", "pressureIn", "P1", "p1Value", "P_in", "p_supply");
             vm.P2 = ExtractParameterValue(root, "p_out", "p2", "pressureOut", "P2", "p2Value", "P_out", "p_return");
             vm.V1 = ExtractParameterValue(root, "v_in", "v1", "volume1", "V1", "V_in", "volume_supply");
@@ -607,6 +667,12 @@ namespace LersMonitor
 
             var pollingTasks = groups.Select(async grp =>
             {
+                if (_dashboardNodes.Any()) 
+                {
+                    var nodeVm = _dashboardNodes.FirstOrDefault(n => n.NodeTitle == grp.Key);
+                    if (nodeVm != null && nodeVm.IsPaused) return; 
+                }
+
                 bool nodeHadAnySuccess = false;
                 foreach (var pt in grp)
                 {
@@ -623,7 +689,6 @@ namespace LersMonitor
                     bool pointFinished = false; 
                     string lastError = "";
 
-                    // ФАЗА 1: ОЧЕРЕДЬ И ЗАПУСК ОПРОСА
                     for (int r = 1; r <= 15; r++) 
                     {
                         if (token.IsCancellationRequested) break;
@@ -655,7 +720,6 @@ namespace LersMonitor
                                 int code = (int)pollRes.StatusCode;
                                 lastError = ParseLersError(errStr, code);
                                 
-                                // Строгая проверка на занятость через коды HTTP (409 Conflict, 423 Locked) и текст
                                 if (code == 409 || code == 423 || 
                                     lastError.IndexOf("занят", StringComparison.OrdinalIgnoreCase) >= 0 ||
                                     lastError.IndexOf("already", StringComparison.OrdinalIgnoreCase) >= 0 ||
@@ -682,10 +746,8 @@ namespace LersMonitor
                         continue;
                     }
 
-                    // ФАЗА 2: ОЖИДАНИЕ НОВЫХ ДАННЫХ ОТ ПРИБОРА
                     if (pollStarted && !pointFinished)
                     {
-                        // УВЕЛИЧЕНО до 60 попыток (3 минуты), так как котельные часто сидят на медленных CSD модемах
                         for (int attempt = 1; attempt <= 60; attempt++)
                         {
                             if (token.IsCancellationRequested) break;
@@ -950,7 +1012,6 @@ namespace LersMonitor
     {
         public double? T1Min { get; set; } public double? T1Max { get; set; }
         public double? T2Min { get; set; } public double? T2Max { get; set; }
-        public double? TnvMin { get; set; } public double? TnvMax { get; set; }
         public double? P1Min { get; set; } public double? P1Max { get; set; }
         public double? P2Min { get; set; } public double? P2Max { get; set; }
         public double? V1Min { get; set; } public double? V1Max { get; set; }
@@ -973,6 +1034,7 @@ namespace LersMonitor
         public string TimeDarkStr { get; set; } = "20:00";
         public double UiScale { get; set; } = 1.0;
         public List<int> SelectedPointIds { get; set; } = new();
+        public int? TnvSourcePointId { get; set; }
         public Dictionary<int, PointThresholds> PointLimits { get; set; } = new();
         public List<PointResultViewModel> LastResults { get; set; } = new();
     }
@@ -982,11 +1044,16 @@ namespace LersMonitor
         public event PropertyChangedEventHandler? PropertyChanged;
         public string NodeTitle { get; set; } = string.Empty;
         public ObservableCollection<PointResultViewModel> Points { get; } = new();
+        
+        private bool _isPaused;
+        public bool IsPaused { get => _isPaused; set { _isPaused = value; Refresh(); } }
+        
         public void Refresh() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(null));
         public Brush TileBackground
         {
             get
             {
+                if (IsPaused) return (Brush)Application.Current.MainWindow.FindResource("AccentGray");
                 if (Points.Any(p => p.HasBreach)) return (Brush)Application.Current.MainWindow.FindResource("AccentRed");
                 if (Points.Any(p => p.HasError)) return (Brush)Application.Current.MainWindow.FindResource("AccentOrange");
                 if (Points.Any(p => p.IsWaiting)) return (Brush)Application.Current.MainWindow.FindResource("AccentGray");
@@ -999,6 +1066,7 @@ namespace LersMonitor
         {
             get
             {
+                if (IsPaused) return "Опрос приостановлен";
                 var errPoint = Points.FirstOrDefault(p => p.HasError); if (errPoint != null) return errPoint.Status;
                 var waitPoint = Points.FirstOrDefault(p => p.IsWaiting); if (waitPoint != null) return waitPoint.Status;
                 return "Опрошено успешно";
@@ -1016,17 +1084,17 @@ namespace LersMonitor
 
         public void RefreshColors()
         {
-            OnPropertyChanged(nameof(T1Color)); OnPropertyChanged(nameof(T2Color)); OnPropertyChanged(nameof(TnvColor));
+            OnPropertyChanged(nameof(T1Color)); OnPropertyChanged(nameof(T2Color));
             OnPropertyChanged(nameof(P1Color)); OnPropertyChanged(nameof(P2Color));
             OnPropertyChanged(nameof(V1Color)); OnPropertyChanged(nameof(V2Color));
             OnPropertyChanged(nameof(M1Color)); OnPropertyChanged(nameof(M2Color)); OnPropertyChanged(nameof(QColor));
             
-            OnPropertyChanged(nameof(T1DashBg)); OnPropertyChanged(nameof(T2DashBg)); OnPropertyChanged(nameof(TnvDashBg));
+            OnPropertyChanged(nameof(T1DashBg)); OnPropertyChanged(nameof(T2DashBg));
             OnPropertyChanged(nameof(P1DashBg)); OnPropertyChanged(nameof(P2DashBg));
             OnPropertyChanged(nameof(V1DashBg)); OnPropertyChanged(nameof(V2DashBg));
             OnPropertyChanged(nameof(M1DashBg)); OnPropertyChanged(nameof(M2DashBg)); OnPropertyChanged(nameof(QDashBg));
 
-            OnPropertyChanged(nameof(T1DashForeground)); OnPropertyChanged(nameof(T2DashForeground)); OnPropertyChanged(nameof(TnvDashForeground));
+            OnPropertyChanged(nameof(T1DashForeground)); OnPropertyChanged(nameof(T2DashForeground));
             OnPropertyChanged(nameof(P1DashForeground)); OnPropertyChanged(nameof(P2DashForeground));
             OnPropertyChanged(nameof(V1DashForeground)); OnPropertyChanged(nameof(V2DashForeground));
             OnPropertyChanged(nameof(M1DashForeground)); OnPropertyChanged(nameof(M2DashForeground)); OnPropertyChanged(nameof(QDashForeground));
@@ -1035,7 +1103,7 @@ namespace LersMonitor
 
         [System.Text.Json.Serialization.JsonIgnore]
         public bool HasBreach => IsBreached(T1, Limits?.T1Min, Limits?.T1Max) || IsBreached(T2, Limits?.T2Min, Limits?.T2Max) ||
-                                 IsBreached(Tnv, Limits?.TnvMin, Limits?.TnvMax) || IsTempScheduleBreached(T1, Tnv, Limits?.TempSchedule) ||
+                                 IsTempScheduleBreached(T1, Limits?.TempSchedule) ||
                                  IsBreached(P1, Limits?.P1Min, Limits?.P1Max) || IsBreached(P2, Limits?.P2Min, Limits?.P2Max) ||
                                  IsBreached(V1, Limits?.V1Min, Limits?.V1Max) || IsBreached(V2, Limits?.V2Min, Limits?.V2Max) ||
                                  IsBreached(M1, Limits?.M1Min, Limits?.M1Max) || IsBreached(M2, Limits?.M2Min, Limits?.M2Max) ||
@@ -1062,8 +1130,9 @@ namespace LersMonitor
             return false;
         }
 
-        private bool IsTempScheduleBreached(double? t1, double? tnv, string? scheduleStr)
+        private bool IsTempScheduleBreached(double? t1, string? scheduleStr)
         {
+            var tnv = MainWindow.CurrentGlobalTnv;
             if (!t1.HasValue || !tnv.HasValue || string.IsNullOrWhiteSpace(scheduleStr)) return false;
             try
             {
@@ -1097,7 +1166,7 @@ namespace LersMonitor
 
         private Brush GetDashBg(double? val, double? min, double? max, bool isT1 = false)
         {
-            if (IsBreached(val, min, max) || (isT1 && IsTempScheduleBreached(T1, Tnv, Limits?.TempSchedule))) return (Brush)Application.Current.MainWindow.FindResource("AccentRed");
+            if (IsBreached(val, min, max) || (isT1 && IsTempScheduleBreached(T1, Limits?.TempSchedule))) return (Brush)Application.Current.MainWindow.FindResource("AccentRed");
             if (IsWaiting) return (Brush)Application.Current.MainWindow.FindResource("AccentGray");
             if (HasError) return (Brush)Application.Current.MainWindow.FindResource("AccentOrange");
             return (Brush)Application.Current.MainWindow.FindResource("AccentGreen");
@@ -1105,7 +1174,6 @@ namespace LersMonitor
 
         [System.Text.Json.Serialization.JsonIgnore] public Brush T1DashBg => GetDashBg(T1, Limits?.T1Min, Limits?.T1Max, true);
         [System.Text.Json.Serialization.JsonIgnore] public Brush T2DashBg => GetDashBg(T2, Limits?.T2Min, Limits?.T2Max);
-        [System.Text.Json.Serialization.JsonIgnore] public Brush TnvDashBg => GetDashBg(Tnv, Limits?.TnvMin, Limits?.TnvMax);
         [System.Text.Json.Serialization.JsonIgnore] public Brush P1DashBg => GetDashBg(P1, Limits?.P1Min, Limits?.P1Max);
         [System.Text.Json.Serialization.JsonIgnore] public Brush P2DashBg => GetDashBg(P2, Limits?.P2Min, Limits?.P2Max);
         [System.Text.Json.Serialization.JsonIgnore] public Brush V1DashBg => GetDashBg(V1, Limits?.V1Min, Limits?.V1Max);
@@ -1114,11 +1182,10 @@ namespace LersMonitor
         [System.Text.Json.Serialization.JsonIgnore] public Brush M2DashBg => GetDashBg(M2, Limits?.M2Min, Limits?.M2Max);
         [System.Text.Json.Serialization.JsonIgnore] public Brush QDashBg => GetDashBg(Q, Limits?.QMin, Limits?.QMax);
 
-        private Brush DashFore(double? val, double? min, double? max, bool isT1 = false) => (IsBreached(val, min, max) || (isT1 && IsTempScheduleBreached(T1, Tnv, Limits?.TempSchedule))) ? Brushes.Yellow : Brushes.White;
+        private Brush DashFore(double? val, double? min, double? max, bool isT1 = false) => (IsBreached(val, min, max) || (isT1 && IsTempScheduleBreached(T1, Limits?.TempSchedule))) ? Brushes.Yellow : Brushes.White;
 
         [System.Text.Json.Serialization.JsonIgnore] public Brush T1DashForeground => DashFore(T1, Limits?.T1Min, Limits?.T1Max, true);
         [System.Text.Json.Serialization.JsonIgnore] public Brush T2DashForeground => DashFore(T2, Limits?.T2Min, Limits?.T2Max);
-        [System.Text.Json.Serialization.JsonIgnore] public Brush TnvDashForeground => DashFore(Tnv, Limits?.TnvMin, Limits?.TnvMax);
         [System.Text.Json.Serialization.JsonIgnore] public Brush P1DashForeground => DashFore(P1, Limits?.P1Min, Limits?.P1Max);
         [System.Text.Json.Serialization.JsonIgnore] public Brush P2DashForeground => DashFore(P2, Limits?.P2Min, Limits?.P2Max);
         [System.Text.Json.Serialization.JsonIgnore] public Brush V1DashForeground => DashFore(V1, Limits?.V1Min, Limits?.V1Max);
@@ -1148,13 +1215,10 @@ namespace LersMonitor
         private DateTime? _deviceTime; public DateTime? DeviceTime { get => _deviceTime; set { _deviceTime = value; OnPropertyChanged(); } }
         
         private double? _t1; public double? T1 { get => _t1; set { _t1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T1Color)); OnPropertyChanged(nameof(T1DashBg)); OnPropertyChanged(nameof(T1DashForeground)); OnPropertyChanged(nameof(SingleStatusColor)); } }
-        [System.Text.Json.Serialization.JsonIgnore] public Brush T1Color => (IsBreached(T1, Limits?.T1Min, Limits?.T1Max) || IsTempScheduleBreached(T1, Tnv, Limits?.TempSchedule)) ? Brushes.Red : ((Brush?)Application.Current.MainWindow?.TryFindResource("LabelPrimary") ?? Brushes.Black);
+        [System.Text.Json.Serialization.JsonIgnore] public Brush T1Color => (IsBreached(T1, Limits?.T1Min, Limits?.T1Max) || IsTempScheduleBreached(T1, Limits?.TempSchedule)) ? Brushes.Red : ((Brush?)Application.Current.MainWindow?.TryFindResource("LabelPrimary") ?? Brushes.Black);
         
         private double? _t2; public double? T2 { get => _t2; set { _t2 = value; OnPropertyChanged(); OnPropertyChanged(nameof(T2Color)); OnPropertyChanged(nameof(T2DashBg)); OnPropertyChanged(nameof(T2DashForeground)); OnPropertyChanged(nameof(SingleStatusColor)); } }
         [System.Text.Json.Serialization.JsonIgnore] public Brush T2Color => GetColor(T2, Limits?.T2Min, Limits?.T2Max);
-        
-        private double? _tnv; public double? Tnv { get => _tnv; set { _tnv = value; OnPropertyChanged(); OnPropertyChanged(nameof(TnvColor)); OnPropertyChanged(nameof(TnvDashBg)); OnPropertyChanged(nameof(TnvDashForeground)); OnPropertyChanged(nameof(T1Color)); OnPropertyChanged(nameof(SingleStatusColor)); } }
-        [System.Text.Json.Serialization.JsonIgnore] public Brush TnvColor => GetColor(Tnv, Limits?.TnvMin, Limits?.TnvMax);
         
         private double? _p1; public double? P1 { get => _p1; set { _p1 = value; OnPropertyChanged(); OnPropertyChanged(nameof(P1Color)); OnPropertyChanged(nameof(P1DashBg)); OnPropertyChanged(nameof(P1DashForeground)); } }
         [System.Text.Json.Serialization.JsonIgnore] public Brush P1Color => GetColor(P1, Limits?.P1Min, Limits?.P1Max);
