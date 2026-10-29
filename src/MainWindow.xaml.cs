@@ -80,6 +80,7 @@ namespace LersMonitor
         {
             System.Net.ServicePointManager.DefaultConnectionLimit = 1000;
             InitializeComponent();
+            try { _http.Timeout = Timeout.InfiniteTimeSpan; } catch {}
             
             GridResults.ItemsSource = _results;
             GridTrend.ItemsSource = _trendHistory;
@@ -107,7 +108,6 @@ namespace LersMonitor
         
         private void InitPolling()
         {
-            _http.Timeout = Timeout.InfiniteTimeSpan;
             _coord = new PollCoordinator(_http, () => _baseUrl, maxDevicePolls: 6, maxHttp: 16);
             _coord.Updated += u => Dispatcher.InvokeAsync(() => ApplyUpdate(u));
             _volumes = new PodpitkaVolumeService(_http, () => _baseUrl);
