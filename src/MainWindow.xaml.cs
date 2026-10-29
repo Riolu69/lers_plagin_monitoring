@@ -61,6 +61,7 @@ namespace LersMonitor
         private CancellationTokenSource? _generalMonitorCts;
         private CancellationTokenSource? _trendCts;
         private CancellationTokenSource? _dashboardCts;
+        private CancellationTokenSource? _podCts;
         private int _activeTrendPointId = 0;
         
         private DispatcherTimer _themeTimer;
@@ -237,6 +238,7 @@ namespace LersMonitor
         {
             _generalMonitorCts?.Cancel();
             _dashboardCts?.Cancel();
+            _podCts?.Cancel();
             _themeTimer.Stop();
             _globalTnvTimer.Stop();
             StopNativeLersTrend();
@@ -893,6 +895,7 @@ namespace LersMonitor
         private void BtnStopDashboard_Click(object sender, RoutedEventArgs e)
         {
             _dashboardCts?.Cancel();
+            _podCts?.Cancel();
             BtnStartDashboard.Visibility = Visibility.Visible; BtnStopDashboard.Visibility = Visibility.Collapsed;
             BtnForcePoll.IsEnabled = false;
             CmbDashboardInterval.IsEnabled = true; 
