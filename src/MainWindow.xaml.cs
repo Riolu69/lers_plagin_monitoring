@@ -39,7 +39,7 @@ namespace LersMonitor
 
     public partial class MainWindow : Window
     {
-        private readonly HttpClient _http = new();
+        private HttpClient _http = new();
         private string? _token;
         private string _baseUrl = "";
         
@@ -80,6 +80,7 @@ namespace LersMonitor
         {
             System.Net.ServicePointManager.DefaultConnectionLimit = 1000;
             InitializeComponent();
+            try { _http.Timeout = Timeout.InfiniteTimeSpan; } catch {}
             
             GridResults.ItemsSource = _results;
             GridTrend.ItemsSource = _trendHistory;
@@ -107,7 +108,6 @@ namespace LersMonitor
         
         private void InitPolling()
         {
-            _http.Timeout = Timeout.InfiniteTimeSpan;
             _coord = new PollCoordinator(_http, () => _baseUrl, maxDevicePolls: 6, maxHttp: 16);
             _coord.Updated += u => Dispatcher.InvokeAsync(() => ApplyUpdate(u));
             _volumes = new PodpitkaVolumeService(_http, () => _baseUrl);
@@ -340,10 +340,13 @@ namespace LersMonitor
 
                 _baseUrl = $"http://{host}:{port}/api/v1";
 
-                var loginPayload = JsonSerializer.Serialize(new { login, password, application = "LersMonitor WPF" });
-                var loginContent = new StringContent(loginPayload, Encoding.UTF8, "application/json");
+                // Always use a fresh HttpClient instance on connect to prevent "This instance has already started one or more requests"
+                _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
                 _http.DefaultRequestHeaders.Accept.Clear();
                 _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+                var loginPayload = JsonSerializer.Serialize(new { login, password, application = "LersMonitor WPF" });
+                var loginContent = new StringContent(loginPayload, Encoding.UTF8, "application/json");
 
                 var response = await _http.PostAsync($"{_baseUrl}/Login", loginContent);
                 var loginResponseJson = await response.Content.ReadAsStringAsync();
