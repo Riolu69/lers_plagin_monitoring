@@ -10,6 +10,7 @@ using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -47,11 +48,13 @@ namespace LersMonitor
         private readonly ObservableCollection<PointResultViewModel> _trendHistory = new();
         private readonly ObservableCollection<DashboardNodeViewModel> _dashboardNodes = new();
         private readonly List<PointResultViewModel> _dashboardFlatPoints = new();
+        private readonly ObservableCollection<PodpitkaNodeViewModel> _podpitkaNodes = new();
         
         private ObservableCollection<TempSchedulePointViewModel> _currentScheduleEdit = new();
 
         private UserSettings _settings = new();
         private List<MeasurePointItem> _editingPoints = new();
+        private List<MeasurePointItem> _editingPodpitkaPoints = new();
         
         private CancellationTokenSource? _generalMonitorCts;
         private CancellationTokenSource? _trendCts;
@@ -60,6 +63,12 @@ namespace LersMonitor
         
         private DispatcherTimer _themeTimer;
         private DispatcherTimer _globalTnvTimer;
+        
+        private PollCoordinator _coord = null!;
+        private PollScheduler? _dashScheduler;
+        private PollScheduler? _podpitkaScheduler;
+        private PodpitkaVolumeService _volumes = null!;
+        private static readonly SemaphoreSlim _uiGate = new(1);
 
         private static string SettingsFilePath =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LersMonitor", "settings.json");
@@ -68,11 +77,11 @@ namespace LersMonitor
         {
             System.Net.ServicePointManager.DefaultConnectionLimit = 1000;
             InitializeComponent();
-            _http.Timeout = TimeSpan.FromMinutes(10);
             
             GridResults.ItemsSource = _results;
             GridTrend.ItemsSource = _trendHistory;
             ItemsDashboard.ItemsSource = _dashboardNodes;
+            ItemsPodpitka.ItemsSource = _podpitkaNodes;
             GridTempSchedule.ItemsSource = _currentScheduleEdit;
             
             CmbTrendDuration.ItemsSource = Enumerable.Range(1, 10).ToList();
@@ -80,6 +89,9 @@ namespace LersMonitor
 
             CmbDashboardInterval.ItemsSource = new List<int> { 1, 2, 3, 5, 10, 15, 20, 30, 60 };
             CmbDashboardInterval.SelectedItem = 10;
+            
+            CmbPodpitkaInterval.ItemsSource = PodpitkaPeriods.IntervalsMin;
+            CmbPodpitkaInterval.SelectedItem = 30;
 
             _themeTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
             _themeTimer.Tick += ThemeTimer_Tick;
@@ -88,6 +100,35 @@ namespace LersMonitor
             _globalTnvTimer.Tick += async (s, e) => await UpdateGlobalTnvAsync();
 
             LoadUserSettings();
+        }
+        
+        private void InitPolling()
+        {
+            _http.Timeout = Timeout.InfiniteTimeSpan;
+            _coord = new PollCoordinator(_http, () => _baseUrl, maxDevicePolls: 6, maxHttp: 16);
+            _coord.Updated += u => Dispatcher.InvokeAsync(() => ApplyUpdate(u));
+            _volumes = new PodpitkaVolumeService(_http, () => _baseUrl);
+        }
+        
+        private void ApplyUpdate(PollUpdate u)
+        {
+            foreach (var vm in _dashboardFlatPoints.Concat(_results).Where(v => v.Id == u.PointId))
+            {
+                if (u.Snapshot != null && u.State is PollState.Ok or PollState.OkCached)
+                {
+                    using var doc = JsonDocument.Parse(u.Snapshot.RawJson);
+                    vm.DeviceTime = u.Snapshot.DeviceTime;
+                    UpdatePointValues(vm, doc.RootElement);
+                }
+                vm.State = u.State; vm.Status = u.Message; vm.RefreshColors();
+            }
+            foreach (var n in _dashboardNodes) n.Refresh();
+            
+            foreach (var p in _podpitkaNodes.SelectMany(n => n.Points).Where(p => p.Id == u.PointId))
+            { 
+                p.State = u.State; p.Message = u.Message; 
+            }
+            foreach (var n in _podpitkaNodes) n.Refresh();
         }
 
         private void LoadUserSettings()
@@ -121,12 +162,20 @@ namespace LersMonitor
                         CmbTheme.SelectedIndex = _settings.ThemeMode;
                         
                         if (_settings.PointLimits == null) _settings.PointLimits = new Dictionary<int, PointThresholds>();
+                        if (_settings.PodpitkaLimits == null) _settings.PodpitkaLimits = new Dictionary<int, VolumeThresholds>();
+                        if (_settings.PodpitkaPointIds == null) _settings.PodpitkaPointIds = new List<int>();
+
+                        CmbPodpitkaInterval.SelectedItem = _settings.PodpitkaIntervalMin > 0 ? _settings.PodpitkaIntervalMin : 30;
 
                         if (_settings.LastResults != null && _settings.LastResults.Any())
                         {
                             foreach (var r in _settings.LastResults)
                             {
                                 if (_settings.PointLimits.TryGetValue(r.Id, out var limits)) r.Limits = limits;
+                                if (r.State == PollState.Pending && !string.IsNullOrEmpty(r.Status) && r.Status.Contains("Снято"))
+                                {
+                                    r.State = PollState.OkCached;
+                                }
                                 _results.Add(r);
                                 r.RefreshColors();
                             }
@@ -171,6 +220,7 @@ namespace LersMonitor
                 _settings.TimeLightStr = TxtThemeLight.Text;
                 _settings.TimeDarkStr = TxtThemeDark.Text;
                 _settings.UiScale = SldUiScale.Value;
+                _settings.PodpitkaIntervalMin = CmbPodpitkaInterval.SelectedItem is int m ? m : 30;
 
                 if (selectedPointIds != null) _settings.SelectedPointIds = selectedPointIds;
                 _settings.LastResults = _results.ToList();
@@ -194,13 +244,15 @@ namespace LersMonitor
 
         private void TabMode_Checked(object sender, RoutedEventArgs e)
         {
-            if (ViewGeneral == null || ViewTrend == null || ViewDashboard == null) return;
+            if (ViewGeneral == null || ViewTrend == null || ViewDashboard == null || ViewPodpitka == null) return;
             ViewGeneral.Visibility = Visibility.Collapsed;
             ViewTrend.Visibility = Visibility.Collapsed;
             ViewDashboard.Visibility = Visibility.Collapsed;
+            ViewPodpitka.Visibility = Visibility.Collapsed;
             if (TabAll.IsChecked == true) ViewGeneral.Visibility = Visibility.Visible;
             else if (TabSingle.IsChecked == true) ViewTrend.Visibility = Visibility.Visible;
             else if (TabDashboard.IsChecked == true) ViewDashboard.Visibility = Visibility.Visible;
+            else if (TabPodpitka.IsChecked == true) ViewPodpitka.Visibility = Visibility.Visible;
         }
 
         private void CmbTheme_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -264,6 +316,7 @@ namespace LersMonitor
             foreach (var r in _trendHistory) r.RefreshColors();
             foreach (var r in _dashboardFlatPoints) r.RefreshColors();
             foreach (var node in _dashboardNodes) node.Refresh();
+            foreach (var n in _podpitkaNodes) { foreach (var p in n.Points) p.RefreshColors(); n.Refresh(); }
         }
 
         private async void BtnConnect_Click(object sender, RoutedEventArgs e)
@@ -302,6 +355,7 @@ namespace LersMonitor
 
                 _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _token);
                 SaveUserSettings();
+                InitPolling();
                 TxtStatus.Text = "Загрузка объектов и точек учёта...";
 
                 var nodeTitlesById = new Dictionary<int, string>();
@@ -366,12 +420,14 @@ namespace LersMonitor
                 }
                 _globalTnvTimer.Start();
 
-                ApplyFilters(); ApplyFiltersDashboard();
+                ApplyFilters(); ApplyFiltersDashboard(); ApplyFiltersPodpitka();
 
                 if (_settings.SelectedPointIds != null && _settings.SelectedPointIds.Any())
                 {
                     foreach (var p in _allPoints.Where(p => _settings.SelectedPointIds.Contains(p.Id))) ListPoints.SelectedItems.Add(p);
                 }
+                
+                RefreshPodpitkaNodes();
 
                 BtnStartMonitor.IsEnabled = true; BtnStartDashboard.IsEnabled = true;
                 TxtStatus.Text = $"Подключено к {host}:{port}. Загружено точек: {_allPoints.Count}";
@@ -397,7 +453,7 @@ namespace LersMonitor
         
         private async Task UpdateGlobalTnvAsync()
         {
-            if (CmbTnvSource.SelectedItem is MeasurePointItem pt)
+            if (CmbTnvSource.SelectedItem is MeasurePointItem pt && _http.DefaultRequestHeaders.Authorization != null)
             {
                 try
                 {
@@ -424,60 +480,23 @@ namespace LersMonitor
             }
         }
 
-        private void BtnNodeToggle_Click(object sender, RoutedEventArgs e)
+        private async void BtnNodeToggle_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button btn && btn.Tag is DashboardNodeViewModel node)
+            if (sender is Button btn && btn.Tag is DashboardNodeViewModel node && _dashboardCts != null)
             {
                 node.IsPaused = !node.IsPaused;
-                
-                if (node.IsPaused)
-                {
-                    foreach (var p in node.Points) 
-                    {
-                        p.Status = "Опрос приостановлен";
-                        p.RefreshColors();
-                    }
-                    node.Refresh();
-                }
-                else
-                {
-                    foreach (var p in node.Points) 
-                    {
-                        p.Status = "Внеочередной запуск...";
-                        p.RefreshColors();
-                    }
-                    node.Refresh();
-
-                    var pointsToPoll = _allPoints.Where(p => node.Points.Any(np => np.Id == p.Id)).ToList();
-                    CancellationToken token = _dashboardCts?.Token ?? new CancellationTokenSource().Token;
-                    
-                    _ = Task.Run(async () => {
-                        try {
-                            var progress = new Progress<string>();
-                            await RunSmartPollingIterationAsync(pointsToPoll, _dashboardFlatPoints, progress, token);
-                        } catch {}
-                    });
-                }
+                foreach (var p in node.Points) { p.State = node.IsPaused ? PollState.Paused : PollState.Pending; p.Status = node.IsPaused ? "Опрос приостановлен" : "Ожидание..."; }
+                node.Refresh();
+                if (!node.IsPaused)
+                    await _coord.PollManyAsync(node.Points.Select(p => new PollTarget(p.Id, node.NodeTitle)), false, _dashboardCts.Token);
             }
         }
 
-        private void BtnRetryPoint_Click(object sender, RoutedEventArgs e)
+        private async void BtnRetryPoint_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button btn && btn.Tag is PointResultViewModel vm)
+            if (sender is Button btn && btn.Tag is PointResultViewModel vm && _dashboardCts != null)
             {
-                var pt = _allPoints.FirstOrDefault(p => p.Id == vm.Id);
-                if (pt == null) return;
-                
-                vm.Status = "Внеочередной опрос точки...";
-                
-                CancellationToken token = _dashboardCts?.Token ?? new CancellationTokenSource().Token;
-                
-                _ = Task.Run(async () => {
-                    try {
-                        var progress = new Progress<string>();
-                        await RunSmartPollingIterationAsync(new List<MeasurePointItem> { pt }, _dashboardFlatPoints.Contains(vm) ? _dashboardFlatPoints : _results, progress, token);
-                    } catch {}
-                });
+                await _coord.PollPointAsync(new PollTarget(vm.Id, vm.NodeTitle), ignoreCache: true, _dashboardCts.Token);
             }
         }
 
@@ -712,162 +731,6 @@ namespace LersMonitor
             vm.Q  = ExtractParameterValue(root, "q_delta", "q", "q_in", "q_out", "q_gvs", "Q_delta", "Q", "heat", "thermalEnergy");
         }
 
-        private async Task<(bool isNew, DateTime? timeNow)> TryFetchAndUpdateAsync(PointResultViewModel vm, DateTime? timeBefore, CancellationToken token)
-        {
-            try
-            {
-                var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{vm.Id}/Consumption/Last", token);
-                if (res.IsSuccessStatusCode)
-                {
-                    var json = await res.Content.ReadAsStringAsync(token);
-                    if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
-                    {
-                        using var doc = JsonDocument.Parse(json);
-                        var root = doc.RootElement;
-                        var timeNow = TryGetDate(root, "dateTime", "deviceTime", "date");
-                        bool isNew = timeNow != null && (timeBefore == null || timeNow > timeBefore);
-
-                        vm.DeviceTime = timeNow;
-                        UpdatePointValues(vm, root);
-                        vm.RefreshColors();
-                        return (isNew, timeNow);
-                    }
-                }
-            }
-            catch { }
-            return (false, null);
-        }
-
-        private static string ParseLersError(string jsonResponse, int statusCode)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(jsonResponse)) return $"Отказ ({statusCode})";
-                using var doc = JsonDocument.Parse(jsonResponse);
-                if (doc.RootElement.TryGetProperty("errorDescription", out var desc)) return desc.GetString() ?? "";
-                if (doc.RootElement.TryGetProperty("errorMessage", out var msg)) return msg.GetString() ?? "";
-            }
-            catch { }
-            return $"Отказ ({statusCode})";
-        }
-
-        private async Task RunSmartPollingIterationAsync(List<MeasurePointItem> selectedPoints, IEnumerable<PointResultViewModel> targetCollection, IProgress<string> progress, CancellationToken token)
-        {
-            var initialTimes = new Dictionary<int, DateTime?>();
-            await Task.WhenAll(selectedPoints.Select(async p =>
-            {
-                try
-                {
-                    var res = await _http.GetAsync($"{_baseUrl}/Data/MeasurePoints/{p.Id}/Consumption/Last", token);
-                    if (res.IsSuccessStatusCode)
-                    {
-                        var json = await res.Content.ReadAsStringAsync(token);
-                        if (!string.IsNullOrWhiteSpace(json) && json.Trim() != "null")
-                        {
-                            using var doc = JsonDocument.Parse(json);
-                            initialTimes[p.Id] = TryGetDate(doc.RootElement, "dateTime", "deviceTime", "date");
-                        }
-                    }
-                }
-                catch { }
-            }));
-
-            progress.Report("Запуск опроса оборудования...");
-
-            var pollingTasks = selectedPoints.Select(async pt =>
-            {
-                if (_dashboardNodes.Any()) 
-                {
-                    var nodeVm = _dashboardNodes.FirstOrDefault(n => n.NodeTitle == pt.NodeTitle);
-                    if (nodeVm != null && nodeVm.IsPaused) return; 
-                }
-
-                if (token.IsCancellationRequested) return;
-                
-                var vm = targetCollection.FirstOrDefault(r => r.Id == pt.Id);
-                if (vm == null) return;
-
-                initialTimes.TryGetValue(pt.Id, out var timeBefore);
-                
-                var (isNew, _) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
-                if (isNew) { vm.Status = "Опрошено успешно"; return; }
-
-                int postCooldown = 0; 
-                bool pointFinished = false; 
-                string lastError = "Нет ответа от прибора";
-
-                for (int attempt = 1; attempt <= 60; attempt++) 
-                {
-                    if (token.IsCancellationRequested) break;
-                    
-                    var (isNewWait, _) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
-                    if (isNewWait) 
-                    { 
-                        vm.Status = "Опрошено успешно"; 
-                        pointFinished = true; 
-                        break; 
-                    }
-
-                    if (postCooldown <= 0)
-                    {
-                        try
-                        {
-                            var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{pt.Id}/Currents?once=true");
-                            pollReq.Content = new ByteArrayContent(Array.Empty<byte>());
-                            var pollRes = await _http.SendAsync(pollReq, token);
-                            
-                            if (pollRes.IsSuccessStatusCode) 
-                            { 
-                                postCooldown = 10;
-                                vm.Status = $"Идёт опрос прибора... [{attempt}/60]";
-                            }
-                            else 
-                            {
-                                string errStr = await pollRes.Content.ReadAsStringAsync(token);
-                                int code = (int)pollRes.StatusCode;
-                                lastError = ParseLersError(errStr, code);
-                                
-                                if (code == 409 || code == 423 || 
-                                    lastError.IndexOf("занят", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                    lastError.IndexOf("already", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                    lastError.IndexOf("используется", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                    lastError.IndexOf("ожидани", StringComparison.OrdinalIgnoreCase) >= 0)
-                                {
-                                    postCooldown = 3; 
-                                    vm.Status = $"Ожидание канала... [{attempt}/60]";
-                                }
-                                else 
-                                {
-                                    postCooldown = 2; 
-                                    vm.Status = $"Повтор ({lastError}) [{attempt}/60]";
-                                }
-                            }
-                        }
-                        catch { 
-                            lastError = "Сбой сети"; 
-                            postCooldown = 2; 
-                            vm.Status = $"Сбой сети, повтор... [{attempt}/60]";
-                        }
-                    }
-                    else
-                    {
-                        postCooldown--;
-                        if (vm.Status.Contains("Идёт опрос")) vm.Status = $"Идёт опрос прибора... [{attempt}/60]";
-                        else if (vm.Status.Contains("Ожидание канала")) vm.Status = $"Ожидание канала... [{attempt}/60]";
-                    }
-                    
-                    await Task.Delay(3000, token);
-                }
-
-                if (!pointFinished && !token.IsCancellationRequested)
-                {
-                    var (finalCheck, _) = await TryFetchAndUpdateAsync(vm, timeBefore, token);
-                    vm.Status = finalCheck ? "Опрошено успешно" : $"Таймаут: {lastError}";
-                }
-            });
-            await Task.WhenAll(pollingTasks);
-        }
-
         private async void BtnStartMonitor_Click(object sender, RoutedEventArgs e)
         {
             var selectedPoints = ListPoints.SelectedItems.Cast<MeasurePointItem>().ToList();
@@ -887,8 +750,8 @@ namespace LersMonitor
             {
                 BtnStartMonitor.IsEnabled = false; BtnCancelMonitor.Visibility = Visibility.Visible;
                 TxtStatus.Text = "Фиксация времени до опроса...";
-                var progress = new Progress<string>(s => TxtStatus.Text = s);
-                await RunSmartPollingIterationAsync(selectedPoints, _results, progress, token);
+                var targets = selectedPoints.Select(p => new PollTarget(p.Id, p.NodeTitle)).ToList();
+                await _coord.PollManyAsync(targets, false, token);
                 if (!token.IsCancellationRequested) TxtStatus.Text = "Мониторинг завершен.";
                 SaveUserSettings();
             }
@@ -919,9 +782,9 @@ namespace LersMonitor
             try
             {
                 try {
-                    var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{selectedPoint.Id}/Currents");
+                    using var pollReq = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Poll/MeasurePoints/{selectedPoint.Id}/Currents");
                     pollReq.Content = new ByteArrayContent(Array.Empty<byte>()); pollReq.Content.Headers.ContentLength = 0;
-                    await _http.SendAsync(pollReq, token);
+                    using var r = await _http.SendAsync(pollReq, token);
                 } catch { }
 
                 DateTime? lastObservedTime = null;
@@ -963,11 +826,14 @@ namespace LersMonitor
             }
         }
 
-        private void StopNativeLersTrend()
+        private async void StopNativeLersTrend()
         {
             _trendCts?.Cancel();
             if (_activeTrendPointId > 0 && !string.IsNullOrEmpty(_baseUrl)) {
-                try { var stopReq = new HttpRequestMessage(HttpMethod.Delete, $"{_baseUrl}/Poll/MeasurePoints/{_activeTrendPointId}/Currents"); _http.SendAsync(stopReq); } catch { }
+                try { 
+                    using var stopReq = new HttpRequestMessage(HttpMethod.Delete, $"{_baseUrl}/Poll/MeasurePoints/{_activeTrendPointId}/Currents"); 
+                    using var r = await _http.SendAsync(stopReq); 
+                } catch { }
                 _activeTrendPointId = 0;
             }
         }
@@ -975,7 +841,7 @@ namespace LersMonitor
         private void BtnStopTrend_Click(object sender, RoutedEventArgs e) => StopNativeLersTrend();
         private void BtnClearTrend_Click(object sender, RoutedEventArgs e) => _trendHistory.Clear();
 
-        private async void BtnStartDashboard_Click(object sender, RoutedEventArgs e)
+        private void BtnStartDashboard_Click(object sender, RoutedEventArgs e)
         {
             var selectedPoints = ListPointsDashboard.SelectedItems.Cast<MeasurePointItem>().ToList();
             if (!selectedPoints.Any()) { MessageBox.Show("Выберите точки учёта для дашборда."); return; }
@@ -984,6 +850,7 @@ namespace LersMonitor
             _dashboardCts = new CancellationTokenSource(); var token = _dashboardCts.Token;
 
             BtnStartDashboard.Visibility = Visibility.Collapsed; BtnStopDashboard.Visibility = Visibility.Visible;
+            BtnForcePoll.IsEnabled = true;
             CmbDashboardInterval.IsEnabled = false;
 
             _dashboardNodes.Clear(); _dashboardFlatPoints.Clear();
@@ -1002,47 +869,211 @@ namespace LersMonitor
                 _dashboardNodes.Add(nodeVm);
             }
 
-            foreach(var vm in _dashboardFlatPoints) await TryFetchAndUpdateAsync(vm, null, token);
-
             if (selectedPoints.Count == 1) { PanelSinglePoint.Visibility = Visibility.Visible; PanelMultiPoint.Visibility = Visibility.Collapsed; PanelSinglePoint.DataContext = _dashboardFlatPoints.First(); }
             else { PanelSinglePoint.Visibility = Visibility.Collapsed; PanelMultiPoint.Visibility = Visibility.Visible; }
 
-            try
-            {
-                while (!token.IsCancellationRequested)
-                {
-                    var progress = new Progress<string>(s => TxtStatus.Text = $"Дашборд: {s}");
-                    // Активный пуш опроса
-                    await RunSmartPollingIterationAsync(selectedPoints, _dashboardFlatPoints, progress, token);
-                    if (token.IsCancellationRequested) break;
-                    
-                    DateTime nextRun = DateTime.Now.AddMinutes(intervalMin);
-                    DateTime nextSilentCheck = DateTime.Now.AddSeconds(10); // Таймер фоновой проверки
+            IReadOnlyList<PollTarget> Targets() => _dashboardNodes.Where(n => !n.IsPaused)
+                .SelectMany(n => n.Points.Select(p => new PollTarget(p.Id, n.NodeTitle))).ToList();
 
-                    // Режим ожидания
-                    while (DateTime.Now < nextRun)
-                    {
-                        if (token.IsCancellationRequested) break;
-                        
-                        // Каждые 10 секунд тихо дёргаем базу ЛЭРСа. Вдруг данные обновились сами (автоопросом сервера)
-                        if (DateTime.Now >= nextSilentCheck)
-                        {
-                            nextSilentCheck = DateTime.Now.AddSeconds(10);
-                            var fetchTasks = _dashboardFlatPoints.Select(vm => TryFetchAndUpdateAsync(vm, vm.DeviceTime, token));
-                            await Task.WhenAll(fetchTasks);
-                        }
-
-                        var remain = nextRun - DateTime.Now;
-                        TxtStatus.Text = $"Дашборд обновлён. Следующий активный запуск через {(int)remain.TotalMinutes} мин {remain.Seconds:D2} сек";
-                        await Task.Delay(1000, token);
-                    }
-                }
-            }
-            catch (OperationCanceledException) { }
-            finally { BtnStartDashboard.Visibility = Visibility.Visible; BtnStopDashboard.Visibility = Visibility.Collapsed; CmbDashboardInterval.IsEnabled = true; TxtStatus.Text = "Автоопрос дашборда остановлен."; }
+            _dashScheduler = new PollScheduler(_coord, Targets);
+            _ = _dashScheduler.RunAsync(TimeSpan.FromMinutes(intervalMin), token);
+            
+            var statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            statusTimer.Tick += (s, ev) => {
+                if (token.IsCancellationRequested) { statusTimer.Stop(); return; }
+                var remain = _dashScheduler.NextRunLocal - DateTime.Now;
+                if (remain.TotalSeconds < 0) remain = TimeSpan.Zero;
+                TxtStatus.Text = $"Дашборд: следующий опрос через {remain:mm\\:ss}";
+            };
+            statusTimer.Start();
         }
 
-        private void BtnStopDashboard_Click(object sender, RoutedEventArgs e) => _dashboardCts?.Cancel();
+        private void BtnStopDashboard_Click(object sender, RoutedEventArgs e)
+        {
+            _dashboardCts?.Cancel();
+            BtnStartDashboard.Visibility = Visibility.Visible; BtnStopDashboard.Visibility = Visibility.Collapsed;
+            BtnForcePoll.IsEnabled = false;
+            CmbDashboardInterval.IsEnabled = true; 
+            TxtStatus.Text = "Автоопрос дашборда остановлен.";
+        }
+        
+        private async void BtnForcePoll_Click(object sender, RoutedEventArgs e)
+        {
+            if (_dashScheduler == null || _dashboardCts == null) return;
+            BtnForcePoll.IsEnabled = false;
+            try { await _dashScheduler.ForceNowAsync(_dashboardCts.Token); }
+            finally { BtnForcePoll.IsEnabled = true; }
+        }
+
+        // --- Вкладка Подпитка ---
+        
+        private void RefreshPodpitkaNodes()
+        {
+            _podpitkaNodes.Clear();
+            var points = _allPoints.Where(p => _settings.PodpitkaPointIds.Contains(p.Id)).ToList();
+            foreach (var g in points.GroupBy(p => p.NodeTitle))
+            {
+                var n = new PodpitkaNodeViewModel { NodeTitle = g.Key };
+                foreach (var p in g)
+                {
+                    _settings.PodpitkaLimits.TryGetValue(p.Id, out var limits);
+                    n.Points.Add(new PodpitkaPointViewModel { Id = p.Id, Title = p.Title, NodeTitle = p.NodeTitle, Limits = limits });
+                }
+                _podpitkaNodes.Add(n);
+            }
+        }
+        
+        private void StartPodpitkaScheduler()
+        {
+            _podCts?.Cancel();
+            _podCts = new CancellationTokenSource();
+            _podpitkaScheduler = new PollScheduler(_coord, () => _podpitkaNodes.SelectMany(n => n.Points.Select(p => new PollTarget(p.Id, n.NodeTitle))).ToList());
+            
+            _ = Task.Run(async () =>
+            {
+                using var timer = new PeriodicTimer(TimeSpan.FromMinutes(_settings.PodpitkaIntervalMin));
+                _ = PodpitkaCycleAsync(false, _podCts.Token);
+                try { while (await timer.WaitForNextTickAsync(_podCts.Token)) _ = PodpitkaCycleAsync(false, _podCts.Token); }
+                catch (OperationCanceledException) { }
+            });
+        }
+
+        private async Task PodpitkaCycleAsync(bool ignoreCache, CancellationToken ct)
+        {
+            var pts = _podpitkaNodes.SelectMany(n => n.Points.Select(p => (p, n))).ToList();
+            foreach (var (p, _) in pts) { p.State = PollState.Queued; }
+            await Task.WhenAll(pts.Select(async x =>
+            {
+                var u = await _coord.PollPointAsync(new PollTarget(x.p.Id, x.n.NodeTitle), ignoreCache, ct);
+                if (u.State != PollState.Error)
+                    try { await _volumes.RefreshAsync(x.p, DateTime.Now, ct); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { x.p.State = PollState.Error; x.p.Message = "Ошибка: " + ex.Message; }
+            }));
+            Dispatcher.Invoke(() => { foreach (var n in _podpitkaNodes) n.Refresh(); });
+        }
+
+        private void BtnPodpitkaPoints_Click(object sender, RoutedEventArgs e)
+        {
+            TxtSearchPodpitka.Text = "";
+            ApplyFiltersPodpitka();
+            ListPodpitka.UnselectAll();
+            foreach (var p in ListPodpitka.Items.Cast<MeasurePointItem>().Where(p => _settings.PodpitkaPointIds.Contains(p.Id)))
+                ListPodpitka.SelectedItems.Add(p);
+            OverlayPodpitkaPoints.Visibility = Visibility.Visible;
+        }
+
+        private void ApplyFiltersPodpitka_Changed(object sender, TextChangedEventArgs e) => ApplyFiltersPodpitka();
+        
+        private void ApplyFiltersPodpitka()
+        {
+            string q = TxtSearchPodpitka.Text.Trim().ToLower();
+            ListPodpitka.ItemsSource = string.IsNullOrEmpty(q) ? _allPoints : _allPoints.Where(p => p.DisplayName.ToLower().Contains(q)).ToList();
+        }
+
+        private void BtnCancelPodpitkaPoints_Click(object sender, RoutedEventArgs e) => OverlayPodpitkaPoints.Visibility = Visibility.Collapsed;
+
+        private void BtnSavePodpitkaPoints_Click(object sender, RoutedEventArgs e)
+        {
+            _settings.PodpitkaPointIds = ListPodpitka.SelectedItems.Cast<MeasurePointItem>().Select(p => p.Id).ToList();
+            SaveUserSettings();
+            RefreshPodpitkaNodes();
+            StartPodpitkaScheduler();
+            OverlayPodpitkaPoints.Visibility = Visibility.Collapsed;
+        }
+
+        private void CmbPodpitkaInterval_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (CmbPodpitkaInterval.SelectedItem is int m)
+            {
+                _settings.PodpitkaIntervalMin = m;
+                SaveUserSettings();
+                StartPodpitkaScheduler();
+            }
+        }
+
+        private async void BtnPodpitkaForce_Click(object sender, RoutedEventArgs e)
+        {
+            if (_podCts == null) StartPodpitkaScheduler();
+            BtnPodpitkaForce.IsEnabled = false;
+            try { await PodpitkaCycleAsync(false, _podCts!.Token); }
+            finally { BtnPodpitkaForce.IsEnabled = true; }
+        }
+
+        private async void BtnPodpitkaRetry_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is PodpitkaPointViewModel vm)
+            {
+                if (_podCts == null) StartPodpitkaScheduler();
+                vm.State = PollState.Queued;
+                var u = await _coord.PollPointAsync(new PollTarget(vm.Id, vm.NodeTitle), true, _podCts!.Token);
+                if (u.State != PollState.Error)
+                    try { await _volumes.RefreshAsync(vm, DateTime.Now, _podCts.Token); }
+                    catch (Exception ex) when (ex is not OperationCanceledException) { vm.State = PollState.Error; vm.Message = "Ошибка: " + ex.Message; }
+                foreach (var n in _podpitkaNodes) n.Refresh();
+            }
+        }
+
+        private void BtnPodpitkaLimits_Click(object sender, RoutedEventArgs e)
+        {
+            var selected = _podpitkaNodes.SelectMany(n => n.Points).ToList();
+            if (!selected.Any()) { MessageBox.Show("Нет точек подпитки."); return; }
+            _editingPodpitkaPoints = _allPoints.Where(p => _settings.PodpitkaPointIds.Contains(p.Id)).ToList();
+
+            if (_editingPodpitkaPoints.Count == 1)
+            {
+                var point = _editingPodpitkaPoints.First();
+                TxtPodpitkaLimitsTitle.Text = $"Допуски подпитки: {point.Title}";
+                TxtPodpitkaLimitsSubtitle.Text = point.NodeTitle;
+
+                if (_settings.PodpitkaLimits.TryGetValue(point.Id, out var limits))
+                {
+                    TxtPodpReportMin.Text = limits.ReportMin?.ToString(); TxtPodpReportMax.Text = limits.ReportMax?.ToString();
+                    TxtPodpDayMin.Text = limits.DayMin?.ToString();       TxtPodpDayMax.Text = limits.DayMax?.ToString();
+                    TxtPodpTodayMin.Text = limits.TodayMin?.ToString();   TxtPodpTodayMax.Text = limits.TodayMax?.ToString();
+                    TxtPodpHourMin.Text = limits.HourMin?.ToString();     TxtPodpHourMax.Text = limits.HourMax?.ToString();
+                }
+                else ClearPodpitkaLimitsFields();
+            }
+            else
+            {
+                TxtPodpitkaLimitsTitle.Text = $"Групповая настройка подпитки ({_editingPodpitkaPoints.Count} точек)";
+                TxtPodpitkaLimitsSubtitle.Text = "Заполните только те поля, которые хотите применить";
+                ClearPodpitkaLimitsFields();
+            }
+            OverlayPodpitkaLimits.Visibility = Visibility.Visible;
+        }
+
+        private void ClearPodpitkaLimitsFields()
+        {
+            TxtPodpReportMin.Text = ""; TxtPodpReportMax.Text = ""; TxtPodpDayMin.Text = ""; TxtPodpDayMax.Text = "";
+            TxtPodpTodayMin.Text = ""; TxtPodpTodayMax.Text = ""; TxtPodpHourMin.Text = ""; TxtPodpHourMax.Text = "";
+        }
+
+        private void BtnCancelPodpitkaLimits_Click(object sender, RoutedEventArgs e) => OverlayPodpitkaLimits.Visibility = Visibility.Collapsed;
+
+        private void BtnSavePodpitkaLimits_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_editingPodpitkaPoints.Any()) return;
+            var rMin = ParseDouble(TxtPodpReportMin.Text); var rMax = ParseDouble(TxtPodpReportMax.Text);
+            var dMin = ParseDouble(TxtPodpDayMin.Text);    var dMax = ParseDouble(TxtPodpDayMax.Text);
+            var tMin = ParseDouble(TxtPodpTodayMin.Text);  var tMax = ParseDouble(TxtPodpTodayMax.Text);
+            var hMin = ParseDouble(TxtPodpHourMin.Text);   var hMax = ParseDouble(TxtPodpHourMax.Text);
+
+            foreach (var point in _editingPodpitkaPoints)
+            {
+                if (!_settings.PodpitkaLimits.TryGetValue(point.Id, out var limits)) { limits = new VolumeThresholds(); _settings.PodpitkaLimits[point.Id] = limits; }
+                if (!string.IsNullOrWhiteSpace(TxtPodpReportMin.Text)) limits.ReportMin = rMin; if (!string.IsNullOrWhiteSpace(TxtPodpReportMax.Text)) limits.ReportMax = rMax;
+                if (!string.IsNullOrWhiteSpace(TxtPodpDayMin.Text))    limits.DayMin = dMin;    if (!string.IsNullOrWhiteSpace(TxtPodpDayMax.Text))    limits.DayMax = dMax;
+                if (!string.IsNullOrWhiteSpace(TxtPodpTodayMin.Text))  limits.TodayMin = tMin;  if (!string.IsNullOrWhiteSpace(TxtPodpTodayMax.Text))  limits.TodayMax = tMax;
+                if (!string.IsNullOrWhiteSpace(TxtPodpHourMin.Text))   limits.HourMin = hMin;   if (!string.IsNullOrWhiteSpace(TxtPodpHourMax.Text))   limits.HourMax = hMax;
+
+                var vm = _podpitkaNodes.SelectMany(n => n.Points).FirstOrDefault(p => p.Id == point.Id);
+                if (vm != null) { vm.Limits = limits; vm.RefreshColors(); }
+            }
+            foreach (var n in _podpitkaNodes) n.Refresh();
+            SaveUserSettings();
+            OverlayPodpitkaLimits.Visibility = Visibility.Collapsed;
+        }
 
         private static double? ExtractParameterValue(JsonElement root, params string[] targetNames)
         {
@@ -1156,6 +1187,9 @@ namespace LersMonitor
         public int? TnvSourcePointId { get; set; }
         public Dictionary<int, PointThresholds> PointLimits { get; set; } = new();
         public List<PointResultViewModel> LastResults { get; set; } = new();
+        public List<int> PodpitkaPointIds { get; set; } = new();
+        public int PodpitkaIntervalMin { get; set; } = 30;
+        public Dictionary<int, VolumeThresholds> PodpitkaLimits { get; set; } = new();
     }
 
     public class DashboardNodeViewModel : INotifyPropertyChanged
@@ -1163,16 +1197,6 @@ namespace LersMonitor
         public event PropertyChangedEventHandler? PropertyChanged;
         public string NodeTitle { get; set; } = string.Empty;
         public ObservableCollection<PointResultViewModel> Points { get; } = new();
-        
-        public int ColumnsCount 
-        {
-            get
-            {
-                if (Points.Count == 1) return 1;
-                if (Points.Count == 2) return 1;
-                return 2;
-            }
-        }
         
         private bool _isPaused;
         public bool IsPaused { get => _isPaused; set { _isPaused = value; Refresh(); } }
@@ -1192,9 +1216,9 @@ namespace LersMonitor
             get
             {
                 if (IsPaused) return (Brush)Application.Current.MainWindow.FindResource("AccentGray");
+                if (Points.Any(p => !p.IsDone)) return (Brush)Application.Current.MainWindow.FindResource("AccentGray");
                 if (Points.Any(p => p.HasBreach)) return (Brush)Application.Current.MainWindow.FindResource("AccentRed");
                 if (Points.Any(p => p.HasError)) return (Brush)Application.Current.MainWindow.FindResource("AccentOrange");
-                if (Points.Any(p => p.IsWaiting)) return (Brush)Application.Current.MainWindow.FindResource("AccentGray");
                 return (Brush)Application.Current.MainWindow.FindResource("AccentGreen");
             }
         }
@@ -1205,8 +1229,8 @@ namespace LersMonitor
             get
             {
                 if (IsPaused) return "Опрос приостановлен";
+                if (Points.Any(p => !p.IsDone)) return $"Опрошено {Points.Count(p => p.IsDone)} из {Points.Count}";
                 var errPoint = Points.FirstOrDefault(p => p.HasError); if (errPoint != null) return errPoint.Status;
-                var waitPoint = Points.FirstOrDefault(p => p.IsWaiting); if (waitPoint != null) return waitPoint.Status;
                 return "Опрошено успешно";
             }
         }
@@ -1241,6 +1265,12 @@ namespace LersMonitor
             OnPropertyChanged(nameof(RetryVisibility));
         }
 
+        private PollState _state = PollState.Pending;
+        [JsonIgnore] public PollState State { get => _state; set { _state = value; OnPropertyChanged(); OnPropertyChanged(nameof(HasError)); OnPropertyChanged(nameof(IsWaiting)); OnPropertyChanged(nameof(RetryVisibility)); } }
+        [JsonIgnore] public bool HasError => State == PollState.Error;
+        [JsonIgnore] public bool IsWaiting => State is PollState.Pending or PollState.Queued or PollState.Polling;
+        [JsonIgnore] public bool IsDone => !IsWaiting && State != PollState.Paused;
+
         [System.Text.Json.Serialization.JsonIgnore]
         public bool HasBreach => IsBreached(T1, Limits?.T1Min, Limits?.T1Max) || IsBreached(T2, Limits?.T2Min, Limits?.T2Max) ||
                                  IsT1ScheduleBreached(T1, Limits?.Schedule) || IsT2ScheduleBreached(T2, Limits?.Schedule) ||
@@ -1248,12 +1278,6 @@ namespace LersMonitor
                                  IsBreached(V1, Limits?.V1Min, Limits?.V1Max) || IsBreached(V2, Limits?.V2Min, Limits?.V2Max) ||
                                  IsBreached(M1, Limits?.M1Min, Limits?.M1Max) || IsBreached(M2, Limits?.M2Min, Limits?.M2Max) ||
                                  IsBreached(Q, Limits?.QMin, Limits?.QMax);
-
-        [System.Text.Json.Serialization.JsonIgnore]
-        public bool HasError => !string.IsNullOrEmpty(Status) && (Status.Contains("Таймаут") || Status.Contains("Отказ") || Status.Contains("Сбой") || Status.Contains("Ошибка"));
-
-        [System.Text.Json.Serialization.JsonIgnore]
-        public bool IsWaiting => string.IsNullOrEmpty(Status) || Status.Contains("Ожидание") || Status.Contains("В очереди") || Status.Contains("Идёт");
 
         [System.Text.Json.Serialization.JsonIgnore]
         public Visibility RetryVisibility => HasError ? Visibility.Visible : Visibility.Collapsed;
@@ -1325,7 +1349,7 @@ namespace LersMonitor
                (isT2 && IsT2ScheduleBreached(T2, Limits?.Schedule))) 
                 return (Brush)Application.Current.MainWindow.FindResource("AccentRed");
                 
-            if (IsWaiting) return (Brush)Application.Current.MainWindow.FindResource("AccentGray");
+            if (!IsDone) return (Brush)Application.Current.MainWindow.FindResource("AccentGray");
             if (HasError) return (Brush)Application.Current.MainWindow.FindResource("AccentOrange");
             return (Brush)Application.Current.MainWindow.FindResource("AccentGreen");
         }
@@ -1361,7 +1385,7 @@ namespace LersMonitor
             {
                 if (HasBreach) return (Brush)Application.Current.MainWindow.FindResource("AccentRed");
                 if (HasError) return (Brush)Application.Current.MainWindow.FindResource("AccentOrange");
-                if (IsWaiting) return (Brush)Application.Current.MainWindow.FindResource("AccentGray");
+                if (!IsDone) return (Brush)Application.Current.MainWindow.FindResource("AccentGray");
                 return (Brush)Application.Current.MainWindow.FindResource("AccentGreen");
             }
         }
@@ -1373,7 +1397,7 @@ namespace LersMonitor
             {
                 if (HasBreach) return (Brush)Application.Current.MainWindow.FindResource("AccentRed");
                 if (HasError) return (Brush)Application.Current.MainWindow.FindResource("AccentOrange");
-                if (IsWaiting) return (Brush)Application.Current.MainWindow.FindResource("AccentGray");
+                if (!IsDone) return (Brush)Application.Current.MainWindow.FindResource("AccentGray");
                 return Brushes.White;
             }
         }
