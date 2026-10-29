@@ -61,6 +61,7 @@ namespace LersMonitor
         private CancellationTokenSource? _generalMonitorCts;
         private CancellationTokenSource? _trendCts;
         private CancellationTokenSource? _dashboardCts;
+        private CancellationTokenSource? _podCts;
         private int _activeTrendPointId = 0;
         
         private DispatcherTimer _themeTimer;
