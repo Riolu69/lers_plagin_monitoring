@@ -746,6 +746,90 @@
                             </WrapPanel>
                         </Border>
                         
+                        <!-- Одиночный режим (Плитки параметров) -->
+                        <Grid x:Name="PanelSinglePoint" Grid.Row="1" Visibility="Collapsed" DataContext="{Binding}">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                            <StackPanel Grid.Row="0" Margin="4,0,0,20">
+                                <TextBlock Text="{Binding NodeTitle}" FontSize="24" FontWeight="Bold" Foreground="{DynamicResource LabelPrimary}"/>
+                                <TextBlock Text="{Binding Title}" FontSize="18" Foreground="{DynamicResource LabelSecondary}" Margin="0,4,0,0"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <TextBlock Text="{Binding Status}" FontSize="14" FontWeight="SemiBold" Foreground="{Binding SingleStatusColor}" Margin="0,0,16,0"/>
+                                    <TextBlock Text="{Binding DeviceTime, StringFormat='Обновлено: {0:dd.MM.yyyy HH:mm:ss}'}" FontSize="14" Foreground="{DynamicResource LabelSecondary}"/>
+                                </StackPanel>
+                            </StackPanel>
+                            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                                <WrapPanel ItemWidth="200" ItemHeight="130">
+                                    <WrapPanel.LayoutTransform>
+                                        <ScaleTransform ScaleX="{Binding ElementName=SldUiScale, Path=Value}" 
+                                                        ScaleY="{Binding ElementName=SldUiScale, Path=Value}"/>
+                                    </WrapPanel.LayoutTransform>
+                                    <Border Background="{Binding T1DashBg}" Visibility="{Binding Source={x:Static local:DashSettings.Instance}, Path=ShowT, Converter={StaticResource BoolToVis}}" CornerRadius="14" Margin="0,0,16,16" Padding="16">
+                                        <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.1" Color="#000000"/></Border.Effect>
+                                        <Grid>
+                                            <TextBlock Text="T1 (°C)" Foreground="{Binding TileForeground}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Top" Opacity="0.85"/>
+                                            <TextBlock Text="{Binding T1, StringFormat=\{0:F1\}, TargetNullValue='-'}" Foreground="{Binding TileForeground}" FontSize="36" FontWeight="Bold" VerticalAlignment="Bottom" HorizontalAlignment="Right"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Background="{Binding T2DashBg}" Visibility="{Binding Source={x:Static local:DashSettings.Instance}, Path=ShowT, Converter={StaticResource BoolToVis}}" CornerRadius="14" Margin="0,0,16,16" Padding="16">
+                                        <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.1" Color="#000000"/></Border.Effect>
+                                        <Grid>
+                                            <TextBlock Text="T2 (°C)" Foreground="{Binding TileForeground}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Top" Opacity="0.85"/>
+                                            <TextBlock Text="{Binding T2, StringFormat=\{0:F1\}, TargetNullValue='-'}" Foreground="{Binding TileForeground}" FontSize="36" FontWeight="Bold" VerticalAlignment="Bottom" HorizontalAlignment="Right"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Background="{Binding P1DashBg}" Visibility="{Binding Source={x:Static local:DashSettings.Instance}, Path=ShowP, Converter={StaticResource BoolToVis}}" CornerRadius="14" Margin="0,0,16,16" Padding="16">
+                                        <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.1" Color="#000000"/></Border.Effect>
+                                        <Grid>
+                                            <TextBlock Text="P1 (атм)" Foreground="{Binding TileForeground}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Top" Opacity="0.85"/>
+                                            <TextBlock Text="{Binding P1, StringFormat=\{0:F1\}, TargetNullValue='-'}" Foreground="{Binding TileForeground}" FontSize="36" FontWeight="Bold" VerticalAlignment="Bottom" HorizontalAlignment="Right"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Background="{Binding P2DashBg}" Visibility="{Binding Source={x:Static local:DashSettings.Instance}, Path=ShowP, Converter={StaticResource BoolToVis}}" CornerRadius="14" Margin="0,0,16,16" Padding="16">
+                                        <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.1" Color="#000000"/></Border.Effect>
+                                        <Grid>
+                                            <TextBlock Text="P2 (атм)" Foreground="{Binding TileForeground}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Top" Opacity="0.85"/>
+                                            <TextBlock Text="{Binding P2, StringFormat=\{0:F1\}, TargetNullValue='-'}" Foreground="{Binding TileForeground}" FontSize="36" FontWeight="Bold" VerticalAlignment="Bottom" HorizontalAlignment="Right"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Background="{Binding V1DashBg}" Visibility="{Binding Source={x:Static local:DashSettings.Instance}, Path=ShowV, Converter={StaticResource BoolToVis}}" CornerRadius="14" Margin="0,0,16,16" Padding="16">
+                                        <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.1" Color="#000000"/></Border.Effect>
+                                        <Grid>
+                                            <TextBlock Text="V1 (м³/ч)" Foreground="{Binding TileForeground}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Top" Opacity="0.85"/>
+                                            <TextBlock Text="{Binding V1, StringFormat=\{0:F2\}, TargetNullValue='-'}" Foreground="{Binding TileForeground}" FontSize="34" FontWeight="Bold" VerticalAlignment="Bottom" HorizontalAlignment="Right"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Background="{Binding V2DashBg}" Visibility="{Binding Source={x:Static local:DashSettings.Instance}, Path=ShowV, Converter={StaticResource BoolToVis}}" CornerRadius="14" Margin="0,0,16,16" Padding="16">
+                                        <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.1" Color="#000000"/></Border.Effect>
+                                        <Grid>
+                                            <TextBlock Text="V2 (м³/ч)" Foreground="{Binding TileForeground}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Top" Opacity="0.85"/>
+                                            <TextBlock Text="{Binding V2, StringFormat=\{0:F2\}, TargetNullValue='-'}" Foreground="{Binding TileForeground}" FontSize="34" FontWeight="Bold" VerticalAlignment="Bottom" HorizontalAlignment="Right"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Background="{Binding M1DashBg}" Visibility="{Binding Source={x:Static local:DashSettings.Instance}, Path=ShowM, Converter={StaticResource BoolToVis}}" CornerRadius="14" Margin="0,0,16,16" Padding="16">
+                                        <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.1" Color="#000000"/></Border.Effect>
+                                        <Grid>
+                                            <TextBlock Text="M1 (т)" Foreground="{Binding TileForeground}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Top" Opacity="0.85"/>
+                                            <TextBlock Text="{Binding M1, StringFormat=\{0:F2\}, TargetNullValue='-'}" Foreground="{Binding TileForeground}" FontSize="34" FontWeight="Bold" VerticalAlignment="Bottom" HorizontalAlignment="Right"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Background="{Binding M2DashBg}" Visibility="{Binding Source={x:Static local:DashSettings.Instance}, Path=ShowM, Converter={StaticResource BoolToVis}}" CornerRadius="14" Margin="0,0,16,16" Padding="16">
+                                        <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.1" Color="#000000"/></Border.Effect>
+                                        <Grid>
+                                            <TextBlock Text="M2 (т)" Foreground="{Binding TileForeground}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Top" Opacity="0.85"/>
+                                            <TextBlock Text="{Binding M2, StringFormat=\{0:F2\}, TargetNullValue='-'}" Foreground="{Binding TileForeground}" FontSize="34" FontWeight="Bold" VerticalAlignment="Bottom" HorizontalAlignment="Right"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Background="{Binding QDashBg}" Visibility="{Binding Source={x:Static local:DashSettings.Instance}, Path=ShowQ, Converter={StaticResource BoolToVis}}" CornerRadius="14" Margin="0,0,16,16" Padding="16">
+                                        <Border.Effect><DropShadowEffect BlurRadius="12" ShadowDepth="3" Opacity="0.1" Color="#000000"/></Border.Effect>
+                                        <Grid>
+                                            <TextBlock Text="Q (Гкал)" Foreground="{Binding TileForeground}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Top" Opacity="0.85"/>
+                                            <TextBlock Text="{Binding Q, StringFormat=\{0:F3\}, TargetNullValue='-'}" Foreground="{Binding TileForeground}" FontSize="34" FontWeight="Bold" VerticalAlignment="Bottom" HorizontalAlignment="Right"/>
+                                        </Grid>
+                                    </Border>
+                                </WrapPanel>
+                            </ScrollViewer>
+                        </Grid>
+                        
                         <!-- Множественный режим (Динамические карточки объектов через MasonryPanel) -->
                         <ScrollViewer x:Name="PanelMultiPoint" Grid.Row="1" VerticalScrollBarVisibility="Auto" CanContentScroll="False">
                             <ItemsControl x:Name="ItemsDashboard">
