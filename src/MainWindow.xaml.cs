@@ -1910,19 +1910,18 @@ namespace LersMonitor
         public double? HourMin { get; set; }   public double? HourMax { get; set; }
     }
 
-    // ---------- Чтение объёмов ----------
+   // ---------- Чтение объёмов (ЛЭРС УЧЁТ REST API) ----------
     public sealed class PodpitkaVolumeService
     {
         private readonly HttpClient _http;
         private readonly Func<string> _baseUrl;
-        private readonly SemaphoreSlim _gate = new(4);
+        private readonly SemaphoreSlim _gate = new(6);
 
-        private static readonly string[] VolumeKeys =
+        private static readonly string[] TargetVolumeKeys =
         {
             "v_in", "V_in", "v1", "V1", "v_mu", "V_mu", "volume1", "volume", "v", "V",
-            "volume_supply", "v_delta", "V_delta",
-            "m_in", "M_in", "m1", "M1", "m_mu", "M_mu", "mass1", "mass", "m", "M", "m_delta", "M_delta",
-            "v_out", "V_out", "v2", "V2", "m_out", "M_out", "m2", "M2"
+            "m_in", "M_in", "m1", "M1", "m_mu", "M_mu", "mass1", "mass", "m", "M",
+            "v_delta", "V_delta", "m_delta", "M_delta", "v_out", "V_out", "v2", "V2"
         };
 
         public PodpitkaVolumeService(HttpClient http, Func<string> baseUrl)
@@ -1931,121 +1930,31 @@ namespace LersMonitor
             _baseUrl = baseUrl;
         }
 
-        public async Task<double?> SumV1Async(int pointId, Period p, bool hourly, CancellationToken ct)
+        public async Task<double?> SumV1Async(int pointId, DateTime from, DateTime to, bool hourly, CancellationToken ct)
         {
             await _gate.WaitAsync(ct);
             try
             {
-                string agg = hourly ? "Hour" : "Day";
-                int aggEnum = hourly ? 1 : 2; // Lers.Data.DataKind: Hour=1, Day=2, Month=3
+                string kind = hourly ? "Hour" : "Day";
+                string fromDate = from.ToString("yyyy-MM-dd");
+                string toDate = to.ToString("yyyy-MM-dd");
 
-                // Перебираем варианты вызова LERS REST API:
-                // 1) start/end с dataKind (стандартный для LERS Web API v1)
-                // 2) startDate/endDate с dataKind
-                // 3) с числовым перечислением dataKind (1/2)
-                // 4) с полным ISO временем
-                string[] urlCandidates = new[]
+                // Прямой запрос к стандартному эндпоинту ЛЭРС с параметром dataKind
+                string url = $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?start={fromDate}&end={toDate}&dataKind={kind}";
+
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                using var res = await _http.SendAsync(req, ct);
+                
+                // Если с короткими датами не прошло, пробуем startDate/endDate
+                if (!res.IsSuccessStatusCode)
                 {
-                    $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?start={p.From:yyyy-MM-dd}&end={p.ToExclusive:yyyy-MM-dd}&dataKind={agg}",
-                    $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?startDate={p.From:yyyy-MM-dd}&endDate={p.ToExclusive:yyyy-MM-dd}&dataKind={agg}",
-                    $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?start={p.From:yyyy-MM-ddTHH:mm:ss}&end={p.ToExclusive:yyyy-MM-ddTHH:mm:ss}&dataKind={agg}",
-                    $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?startDate={p.From:yyyy-MM-ddTHH:mm:ss}&endDate={p.ToExclusive:yyyy-MM-ddTHH:mm:ss}&dataKind={agg}",
-                    $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?start={p.From:yyyy-MM-dd}&end={p.ToExclusive:yyyy-MM-dd}&dataKind={aggEnum}",
-                    $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?startDate={p.From:yyyy-MM-dd}&endDate={p.ToExclusive:yyyy-MM-dd}&dataKind={aggEnum}",
-                    $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?startDate={p.From:yyyy-MM-dd}&endDate={p.ToExclusive:yyyy-MM-dd}&dataAggregation={agg}"
-                };
-
-                foreach (var url in urlCandidates)
-                {
-                    try
-                    {
-                        using var res = await _http.GetAsync(url, ct);
-                        if (!res.IsSuccessStatusCode) continue;
-
-                        var json = await res.Content.ReadAsStringAsync(ct);
-                        if (string.IsNullOrWhiteSpace(json) || json.Trim() == "null" || json.Trim() == "[]") continue;
-
-                        using var doc = JsonDocument.Parse(json);
-                        var records = FindBestRecordsArray(doc.RootElement, hourly);
-                        if (!records.HasValue || records.Value.GetArrayLength() == 0) continue;
-
-                        double sum = 0;
-                        bool any = false;
-
-                        foreach (var rec in records.Value.EnumerateArray())
-                        {
-                            var v = ReadVolume(rec);
-                            if (v.HasValue)
-                            {
-                                sum += v.Value;
-                                any = true;
-                            }
-                        }
-
-                        if (any) return sum;
-                    }
-                    catch { }
+                    string altUrl = $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?startDate={fromDate}&endDate={toDate}&dataKind={kind}";
+                    using var altRes = await _http.GetAsync(altUrl, ct);
+                    if (!altRes.IsSuccessStatusCode) return null;
+                    return await ParseLersConsumptionArray(altRes);
                 }
 
-                // Если суточный архив за вчера ещё не закрыт или пуст, пробуем посчитать по часовым архивам за вчера
-                if (!hourly)
-                {
-                    try
-                    {
-                        var hourSum = await SumHourlyFallbackAsync(pointId, p, ct);
-                        if (hourSum.HasValue) return hourSum.Value;
-                    }
-                    catch { }
-                }
-
-                return null;
-            }
-            finally
-            {
-                _gate.Release();
-            }
-        }
-
-        private async Task<double?> SumHourlyFallbackAsync(int pointId, Period p, CancellationToken ct)
-        {
-            string url = $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?start={p.From:yyyy-MM-ddTHH:mm:ss}&end={p.ToExclusive:yyyy-MM-ddTHH:mm:ss}&dataKind=Hour";
-            using var res = await _http.GetAsync(url, ct);
-            if (!res.IsSuccessStatusCode) return null;
-
-            var json = await res.Content.ReadAsStringAsync(ct);
-            if (string.IsNullOrWhiteSpace(json) || json.Trim() == "null") return null;
-
-            using var doc = JsonDocument.Parse(json);
-            var records = FindBestRecordsArray(doc.RootElement, true);
-            if (!records.HasValue || records.Value.GetArrayLength() == 0) return null;
-
-            double sum = 0;
-            bool any = false;
-
-            foreach (var rec in records.Value.EnumerateArray())
-            {
-                var v = ReadVolume(rec);
-                if (v.HasValue)
-                {
-                    sum += v.Value;
-                    any = true;
-                }
-            }
-
-            return any ? sum : null;
-        }
-
-        public async Task<double?> GetLastVolumeAsync(int pointId, CancellationToken ct)
-        {
-            await _gate.WaitAsync(ct);
-            try
-            {
-                using var res = await _http.GetAsync($"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption/Last", ct);
-                if (!res.IsSuccessStatusCode) return null;
-                var json = await res.Content.ReadAsStringAsync(ct);
-                if (string.IsNullOrWhiteSpace(json) || json.Trim() == "null") return null;
-                using var doc = JsonDocument.Parse(json);
-                return ReadVolume(doc.RootElement);
+                return await ParseLersConsumptionArray(res);
             }
             catch
             {
@@ -2057,53 +1966,85 @@ namespace LersMonitor
             }
         }
 
-        private static JsonElement? FindBestRecordsArray(JsonElement root, bool hourly)
+        private static async Task<double?> ParseLersConsumptionArray(HttpResponseMessage response)
         {
-            if (root.ValueKind == JsonValueKind.Array)
-                return root;
+            var json = await response.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(json) || json.Trim() == "null" || json.Trim() == "[]") return null;
 
-            if (root.ValueKind != JsonValueKind.Object)
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            JsonElement array = root;
+            if (root.ValueKind != JsonValueKind.Array)
+            {
+                // Если сервер обернул массив в свойство records / values / consumption
+                bool found = false;
+                foreach (var prop in root.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.Array && prop.Value.GetArrayLength() > 0)
+                    {
+                        array = prop.Value;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return null;
+            }
+
+            double total = 0;
+            bool hasData = false;
+
+            foreach (var record in array.EnumerateArray())
+            {
+                var val = ExtractVolume(record);
+                if (val.HasValue)
+                {
+                    total += val.Value;
+                    hasData = true;
+                }
+            }
+
+            return hasData ? total : null;
+        }
+
+        public async Task<double?> GetLastInstantVolumeAsync(int pointId, CancellationToken ct)
+        {
+            await _gate.WaitAsync(ct);
+            try
+            {
+                using var res = await _http.GetAsync($"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption/Last", ct);
+                if (!res.IsSuccessStatusCode) return null;
+                var json = await res.Content.ReadAsStringAsync(ct);
+                if (string.IsNullOrWhiteSpace(json) || json.Trim() == "null") return null;
+                using var doc = JsonDocument.Parse(json);
+                return ExtractVolume(doc.RootElement);
+            }
+            catch
+            {
                 return null;
-
-            string preferredPrefix = hourly ? "hour" : "day";
-            foreach (var prop in root.EnumerateObject())
-            {
-                if (prop.Value.ValueKind == JsonValueKind.Array &&
-                    prop.Name.Contains(preferredPrefix, StringComparison.OrdinalIgnoreCase) &&
-                    prop.Value.GetArrayLength() > 0)
-                {
-                    return prop.Value;
-                }
             }
-
-            foreach (var prop in root.EnumerateObject())
+            finally
             {
-                if (prop.Value.ValueKind == JsonValueKind.Array && prop.Value.GetArrayLength() > 0)
-                    return prop.Value;
+                _gate.Release();
             }
-
-            return null;
         }
 
-        public static double? ReadVolume(JsonElement rec)
+        public static double? ExtractVolume(JsonElement elem)
         {
-            if (rec.ValueKind != JsonValueKind.Object) return null;
+            if (elem.ValueKind != JsonValueKind.Object) return null;
 
-            string[] vKeys = { "v_in", "V_in", "v1", "V1", "v_mu", "V_mu", "volume1", "volume", "v", "V", "v_delta", "V_delta" };
-            string[] mKeys = { "m_in", "M_in", "m1", "M1", "m_mu", "M_mu", "mass1", "mass", "m", "M", "m_delta", "M_delta" };
-
-            // 1. Прямые свойства объема (> 0)
-            foreach (var key in vKeys)
+            // 1. Прямые поля объекта
+            foreach (var key in TargetVolumeKeys)
             {
-                if (rec.TryGetProperty(key, out var p))
+                if (elem.TryGetProperty(key, out var prop))
                 {
-                    if (p.ValueKind == JsonValueKind.Number && p.TryGetDouble(out var d) && d > 0) return d;
-                    if (p.ValueKind == JsonValueKind.String && double.TryParse(p.GetString()?.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out var s) && s > 0) return s;
+                    if (prop.ValueKind == JsonValueKind.Number && prop.TryGetDouble(out var d)) return d;
+                    if (prop.ValueKind == JsonValueKind.String && double.TryParse(prop.GetString()?.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out var s)) return s;
                 }
             }
 
-            // 2. Вложенные массивы параметров (values, data, parameters)
-            foreach (var prop in rec.EnumerateObject())
+            // 2. Вложенные массивы параметров ЛЭРС [{ dataParameter: "V_in", value: 11.0 }]
+            foreach (var prop in elem.EnumerateObject())
             {
                 if (prop.Value.ValueKind == JsonValueKind.Array)
                 {
@@ -2115,80 +2056,40 @@ namespace LersMonitor
                         else if (item.TryGetProperty("parameter", out var p)) param = p.GetString() ?? "";
                         else if (item.TryGetProperty("name", out var n)) param = n.GetString() ?? "";
 
-                        if (vKeys.Any(k => k.Equals(param, StringComparison.OrdinalIgnoreCase)))
+                        if (TargetVolumeKeys.Any(k => k.Equals(param, StringComparison.OrdinalIgnoreCase)))
                         {
                             if (item.TryGetProperty("value", out var valProp) || item.TryGetProperty("val", out valProp))
                             {
-                                if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out var d) && d > 0) return d;
-                                if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString()?.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out var s) && s > 0) return s;
+                                if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out var d)) return d;
+                                if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString()?.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out var s)) return s;
                             }
                         }
                     }
-                }
-            }
-
-            // 3. Fallback на свойства массы (M1, m_in в тоннах) если V1 не задан
-            foreach (var key in mKeys)
-            {
-                if (rec.TryGetProperty(key, out var p))
-                {
-                    if (p.ValueKind == JsonValueKind.Number && p.TryGetDouble(out var d) && d > 0) return d;
-                    if (p.ValueKind == JsonValueKind.String && double.TryParse(p.GetString()?.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out var s) && s > 0) return s;
-                }
-            }
-
-            foreach (var prop in rec.EnumerateObject())
-            {
-                if (prop.Value.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var item in prop.Value.EnumerateArray())
-                    {
-                        if (item.ValueKind != JsonValueKind.Object) continue;
-                        string param = "";
-                        if (item.TryGetProperty("dataParameter", out var dp)) param = dp.GetString() ?? "";
-                        else if (item.TryGetProperty("parameter", out var p)) param = p.GetString() ?? "";
-                        else if (item.TryGetProperty("name", out var n)) param = n.GetString() ?? "";
-
-                        if (mKeys.Any(k => k.Equals(param, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            if (item.TryGetProperty("value", out var valProp) || item.TryGetProperty("val", out valProp))
-                            {
-                                if (valProp.ValueKind == JsonValueKind.Number && valProp.TryGetDouble(out var d) && d > 0) return d;
-                                if (valProp.ValueKind == JsonValueKind.String && double.TryParse(valProp.GetString()?.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out var s) && s > 0) return s;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 4. Если значение равно 0.0 (прибор реально зафиксировал 0)
-            foreach (var key in vKeys)
-            {
-                if (rec.TryGetProperty(key, out var p))
-                {
-                    if (p.ValueKind == JsonValueKind.Number && p.TryGetDouble(out var d)) return d;
-                    if (p.ValueKind == JsonValueKind.String && double.TryParse(p.GetString()?.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out var s)) return s;
                 }
             }
 
             return null;
         }
 
-        /// <summary>Один проход по точке: 4 среза параллельно.</summary>
         public async Task RefreshAsync(PodpitkaPointViewModel vm, DateTime now, CancellationToken ct)
         {
             var r = PodpitkaPeriods.Report(now);
             var y = PodpitkaPeriods.Yesterday(now);
-            var t = PodpitkaPeriods.Today(now);
-            var h = PodpitkaPeriods.PrevHour(now);
 
-            // Суточный архив (за месяц и за вчера)
-            var taskReport = SumV1Async(vm.Id, r, false, ct);
-            var taskDay = SumV1Async(vm.Id, y, false, ct);
-            
-            // Часовой архив (за сегодня сумма часов с полуночи, и за прошлый час)
-            var taskToday = t.ToExclusive > t.From ? SumV1Async(vm.Id, t, true, ct) : Task.FromResult<double?>(0);
-            var taskHour = SumV1Async(vm.Id, h, true, ct);
+            // 1. Отчётный месяц (сумма суток с 25 числа прошлого месяца по 24 текущего)
+            var taskReport = SumV1Async(vm.Id, r.From, r.ToExclusive, false, ct);
+
+            // 2. Вчера (суточный архив за вчерашний день, Day)
+            var taskDay = SumV1Async(vm.Id, y.From, y.ToExclusive, false, ct);
+
+            // 3. Сегодня (сумма всех часовых архивов с 00:00 до текущего часа)
+            var todayStart = now.Date;
+            var taskToday = now.Hour > 0 ? SumV1Async(vm.Id, todayStart, now, true, ct) : Task.FromResult<double?>(0);
+
+            // 4. Прошлый час (часовой срез за предыдущий час)
+            var prevHourStart = now.Date.AddHours(now.Hour - 1);
+            var prevHourEnd = now.Date.AddHours(now.Hour);
+            var taskHour = SumV1Async(vm.Id, prevHourStart, prevHourEnd, true, ct);
 
             await Task.WhenAll(taskReport, taskDay, taskToday, taskHour);
 
@@ -2197,17 +2098,17 @@ namespace LersMonitor
             double? today = taskToday.Result;
             double? hour = taskHour.Result;
 
-            // Fallback ТОЛЬКО для текущего незакрытого часа и дня: если часовой архив ещё не записан, берём мгновенный/текущий срез
-            if (!hour.HasValue || !today.HasValue)
+            // Если часовой архив за неполный час ещё не успел записаться в базу, берём оперативный срез
+            if (!hour.HasValue)
             {
-                var lastVal = await GetLastVolumeAsync(vm.Id, ct);
-                if (lastVal.HasValue)
-                {
-                    hour ??= lastVal;
-                    today ??= lastVal;
-                }
+                hour = await GetLastInstantVolumeAsync(vm.Id, ct);
+            }
+            if (!today.HasValue && hour.HasValue)
+            {
+                today = hour;
             }
 
+            // Ни в коем случае не перезаписываем `day` значением `today`!
             vm.SetVolumes(rep, day, today, hour, DateTime.Now);
         }
     }
