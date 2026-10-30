@@ -62,6 +62,7 @@ namespace LersMonitor
         private CancellationTokenSource? _trendCts;
         private CancellationTokenSource? _dashboardCts;
         private CancellationTokenSource? _podCts;
+        private bool _isLoaded = false;
         private int _activeTrendPointId = 0;
         
         private DispatcherTimer _themeTimer;
@@ -104,6 +105,7 @@ namespace LersMonitor
             _globalTnvTimer.Tick += async (s, e) => await UpdateGlobalTnvAsync();
 
             LoadUserSettings();
+            _isLoaded = true;
         }
         
         private void InitPolling()
@@ -194,6 +196,7 @@ namespace LersMonitor
 
         private void SaveUserSettings(List<int>? selectedPointIds = null)
         {
+            if (!_isLoaded) return;
             try
             {
                 var dir = Path.GetDirectoryName(SettingsFilePath);
@@ -260,7 +263,7 @@ namespace LersMonitor
 
         private void CmbTheme_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (PanelAutoTheme == null) return;
+            if (!_isLoaded || PanelAutoTheme == null) return;
             PanelAutoTheme.Visibility = CmbTheme.SelectedIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
             ApplyThemeLogic();
             SaveUserSettings();
@@ -416,6 +419,9 @@ namespace LersMonitor
                 CmbSystemType.ItemsSource = new List<string> { "Все системы", "Теплоснабжение", "ГВС", "Подпитка", "ХВС" }; CmbSystemType.SelectedIndex = 0;
                 CmbSystemTypeDashboard.ItemsSource = new List<string> { "Все системы", "Теплоснабжение", "ГВС", "Подпитка", "ХВС" }; CmbSystemTypeDashboard.SelectedIndex = 0;
 
+                CmbNodePodpitka.ItemsSource = uniqueNodes; CmbNodePodpitka.SelectedIndex = 0;
+                CmbSystemTypePodpitka.ItemsSource = new List<string> { "Все системы", "Теплоснабжение", "ГВС", "Подпитка", "ХВС" }; CmbSystemTypePodpitka.SelectedIndex = 0;
+
                 CmbTrendPoint.ItemsSource = _allPoints;
                 if (_allPoints.Any()) CmbTrendPoint.SelectedIndex = 0;
                 
@@ -434,6 +440,13 @@ namespace LersMonitor
                 }
                 
                 RefreshPodpitkaNodes();
+                // Сразу считываем архивные данные из ЛЭРС за закрытые периоды
+                _ = Task.Run(async () =>
+                {
+                    var pts = _podpitkaNodes.SelectMany(n => n.Points).ToList();
+                    await Task.WhenAll(pts.Select(p => _volumes.RefreshAsync(p, DateTime.Now, CancellationToken.None)));
+                    Dispatcher.Invoke(() => { foreach (var n in _podpitkaNodes) n.Refresh(); });
+                });
 
                 BtnStartMonitor.IsEnabled = true; BtnStartDashboard.IsEnabled = true;
                 TxtStatus.Text = $"Подключено к {host}:{port}. Загружено точек: {_allPoints.Count}";
@@ -947,45 +960,111 @@ namespace LersMonitor
         private async Task PodpitkaCycleAsync(bool ignoreCache, CancellationToken ct)
         {
             var pts = _podpitkaNodes.SelectMany(n => n.Points.Select(p => (p, n))).ToList();
-            foreach (var (p, _) in pts) { p.State = PollState.Queued; }
+
+            // 1. СРАЗУ считываем из базы ЛЭРС готовые регламентные архивы (месяц, вчера, сегодня)
             await Task.WhenAll(pts.Select(async x =>
             {
-                var u = await _coord.PollPointAsync(new PollTarget(x.p.Id, x.n.NodeTitle), ignoreCache, ct);
-                if (u.State != PollState.Error)
-                    try { await _volumes.RefreshAsync(x.p, DateTime.Now, ct); }
-                    catch (Exception ex) when (ex is not OperationCanceledException) { x.p.State = PollState.Error; x.p.Message = "Ошибка: " + ex.Message; }
+                try
+                {
+                    await _volumes.RefreshAsync(x.p, DateTime.Now, ct);
+                    x.p.State = PollState.OkCached;
+                    x.p.Message = "Данные из ЛЭРС загружены";
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    x.p.Message = "Ошибка архива: " + ex.Message;
+                }
+            }));
+            Dispatcher.Invoke(() => { foreach (var n in _podpitkaNodes) n.Refresh(); });
+
+            // 2. Параллельно опрашиваем приборы для добора свежих данных
+            await Task.WhenAll(pts.Select(async x =>
+            {
+                try
+                {
+                    x.p.State = PollState.Polling;
+                    var u = await _coord.PollPointAsync(new PollTarget(x.p.Id, x.n.NodeTitle), ignoreCache, ct);
+                    if (u.State != PollState.Error)
+                    {
+                        await _volumes.RefreshAsync(x.p, DateTime.Now, ct);
+                        x.p.State = PollState.Ok;
+                        x.p.Message = "Опрошено " + DateTime.Now.ToString("HH:mm:ss");
+                    }
+                }
+                catch { }
             }));
             Dispatcher.Invoke(() => { foreach (var n in _podpitkaNodes) n.Refresh(); });
         }
 
-        private void BtnPodpitkaPoints_Click(object sender, RoutedEventArgs e)
+        private void BtnTogglePodpitka_Click(object sender, RoutedEventArgs e)
         {
-            TxtSearchPodpitka.Text = "";
-            ApplyFiltersPodpitka();
-            ListPodpitka.UnselectAll();
-            foreach (var p in ListPodpitka.Items.Cast<MeasurePointItem>().Where(p => _settings.PodpitkaPointIds.Contains(p.Id)))
-                ListPodpitka.SelectedItems.Add(p);
-            OverlayPodpitkaPoints.Visibility = Visibility.Visible;
+            bool isVis = PanelPodpitkaLeft.Visibility == Visibility.Visible;
+            PanelPodpitkaLeft.Visibility = isVis ? Visibility.Collapsed : Visibility.Visible;
+            BtnTogglePodpPanel.Content = isVis ? "▶" : "◀";
         }
 
-        private void ApplyFiltersPodpitka_Changed(object sender, TextChangedEventArgs e) => ApplyFiltersPodpitka();
-        
-        private void ApplyFiltersPodpitka()
-        {
-            string q = TxtSearchPodpitka.Text.Trim().ToLower();
-            ListPodpitka.ItemsSource = string.IsNullOrEmpty(q) ? _allPoints : _allPoints.Where(p => p.DisplayName.ToLower().Contains(q)).ToList();
-        }
+        private void BtnSelectAllPodpitka_Click(object sender, RoutedEventArgs e) => ListPodpitka.SelectAll();
+        private void BtnClearSelectionPodpitka_Click(object sender, RoutedEventArgs e) => ListPodpitka.UnselectAll();
 
-        private void BtnCancelPodpitkaPoints_Click(object sender, RoutedEventArgs e) => OverlayPodpitkaPoints.Visibility = Visibility.Collapsed;
-
-        private void BtnSavePodpitkaPoints_Click(object sender, RoutedEventArgs e)
+        private void ListPodpitka_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (!_isLoaded) return;
             _settings.PodpitkaPointIds = ListPodpitka.SelectedItems.Cast<MeasurePointItem>().Select(p => p.Id).ToList();
             SaveUserSettings();
             RefreshPodpitkaNodes();
-            StartPodpitkaScheduler();
-            OverlayPodpitkaPoints.Visibility = Visibility.Collapsed;
+            _ = Task.Run(async () =>
+            {
+                var pts = _podpitkaNodes.SelectMany(n => n.Points).ToList();
+                await Task.WhenAll(pts.Select(p => _volumes.RefreshAsync(p, DateTime.Now, CancellationToken.None)));
+                Dispatcher.Invoke(() => { foreach (var n in _podpitkaNodes) n.Refresh(); });
+            });
         }
+
+        private void ApplyFiltersPodpitka_Changed(object sender, RoutedEventArgs e) => ApplyFiltersPodpitka();
+
+        private void ApplyFiltersPodpitka()
+        {
+            if (_allPoints == null || !_allPoints.Any()) return;
+            string q = TxtSearchPodpitka.Text.Trim().ToLower();
+            string? selectedNode = CmbNodePodpitka?.SelectedItem as string;
+            string? selectedType = CmbSystemTypePodpitka?.SelectedItem as string;
+
+            var filtered = _allPoints.AsEnumerable();
+            if (!string.IsNullOrEmpty(q)) filtered = filtered.Where(p => p.DisplayName.ToLower().Contains(q));
+            if (!string.IsNullOrEmpty(selectedNode) && selectedNode != "Все объекты") filtered = filtered.Where(p => p.NodeTitle == selectedNode);
+            if (!string.IsNullOrEmpty(selectedType) && selectedType != "Все системы") filtered = filtered.Where(p => p.Title.ToLower().Contains(selectedType.ToLower()));
+
+            ListPodpitka.ItemsSource = filtered.ToList();
+
+            if (_settings.PodpitkaPointIds != null)
+            {
+                foreach (var p in filtered.Where(p => _settings.PodpitkaPointIds.Contains(p.Id)))
+                    ListPodpitka.SelectedItems.Add(p);
+            }
+        }
+
+        private void BtnStartPodpitka_Click(object sender, RoutedEventArgs e)
+        {
+            StartPodpitkaScheduler();
+            BtnStartPodpitka.Visibility = Visibility.Collapsed;
+            BtnStopPodpitka.Visibility = Visibility.Visible;
+            CmbPodpitkaInterval.IsEnabled = false;
+            TxtStatus.Text = "Автоопрос подпитки запущен.";
+        }
+
+        private void BtnStopPodpitka_Click(object sender, RoutedEventArgs e)
+        {
+            _podCts?.Cancel();
+            _podCts = null;
+            BtnStartPodpitka.Visibility = Visibility.Visible;
+            BtnStopPodpitka.Visibility = Visibility.Collapsed;
+            CmbPodpitkaInterval.IsEnabled = true;
+            TxtStatus.Text = "Автоопрос подпитки остановлен.";
+        }
+
+        private void BtnPodpitkaPoints_Click(object sender, RoutedEventArgs e) { }
+        private void BtnCancelPodpitkaPoints_Click(object sender, RoutedEventArgs e) { }
+        private void BtnSavePodpitkaPoints_Click(object sender, RoutedEventArgs e) { }
 
         private void CmbPodpitkaInterval_Changed(object sender, SelectionChangedEventArgs e)
         {
@@ -1860,12 +1939,25 @@ namespace LersMonitor
 
         private static double? ReadV1(JsonElement rec)
         {
-            foreach (var n in new[] { "v_in", "v1", "volume1", "V1", "V_in", "volume_supply" })
+            foreach (var n in new[] { "v_in", "v1", "volume1", "V1", "V_in", "volume_supply", "v_delta", "V_delta", "volume", "v" })
+            {
                 if (rec.TryGetProperty(n, out var p))
                 {
                     if (p.ValueKind == JsonValueKind.Number && p.TryGetDouble(out var d)) return d;
                     if (p.ValueKind == JsonValueKind.String && double.TryParse(p.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var s)) return s;
                 }
+            }
+            if (rec.TryGetProperty("values", out var vals) && vals.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in vals.EnumerateArray())
+                {
+                    string param = item.TryGetProperty("dataParameter", out var dp) ? dp.GetString() ?? "" : "";
+                    if (param.Equals("v_in", StringComparison.OrdinalIgnoreCase) || param.Equals("v1", StringComparison.OrdinalIgnoreCase) || param.Equals("volume", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if ((item.TryGetProperty("value", out var v) || item.TryGetProperty("val", out v)) && v.TryGetDouble(out var d)) return d;
+                    }
+                }
+            }
             return null;
         }
 

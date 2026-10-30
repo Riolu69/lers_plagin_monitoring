@@ -967,62 +967,180 @@
 
             <!-- Экран 4: Подпитка -->
             <Grid x:Name="ViewPodpitka" Grid.Row="2" Visibility="Collapsed">
-              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-              <Border Background="{DynamicResource CardBackground}" CornerRadius="14" Padding="14" Margin="0,0,0,12">
-                <WrapPanel>
-                  <Button Content="⚙ Выбрать точки" Style="{StaticResource ApplePrimaryButton}" Background="{DynamicResource AccentGray}" Margin="0,0,10,0" Click="BtnPodpitkaPoints_Click"/>
-                  <Button Content="⚙ Допуски V1" Style="{StaticResource ApplePrimaryButton}" Background="{DynamicResource AccentGray}" Margin="0,0,10,0" Click="BtnPodpitkaLimits_Click"/>
-                  <TextBlock Text="Опрос каждые (мин):" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource LabelSecondary}"/>
-                  <ComboBox x:Name="CmbPodpitkaInterval" Width="70" Margin="0,0,14,0" SelectionChanged="CmbPodpitkaInterval_Changed"/>
-                  <Button x:Name="BtnPodpitkaForce" Content="⟳ Принудительный опрос" Style="{StaticResource AppleGreenButton}" Click="BtnPodpitkaForce_Click"/>
+    <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
+
+    <!-- Левая панель выбора точек для подпитки -->
+    <Border x:Name="PanelPodpitkaLeft" Width="320" Grid.Column="0" Background="{DynamicResource CardBackground}" CornerRadius="14" Margin="0,0,4,0" Padding="14">
+        <Border.Effect>
+            <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/>
+        </Border.Effect>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Text="Выбор точек подпитки" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource LabelPrimary}" Margin="2,0,0,10"/>
+            <StackPanel Grid.Row="1" Margin="0,0,0,10">
+                <TextBox x:Name="TxtSearchPodpitka" Padding="8,6" Margin="0,0,0,8" ToolTip="Поиск по названию" TextChanged="ApplyFiltersPodpitka_Changed"/>
+                <Grid Margin="0,0,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <ComboBox x:Name="CmbNodePodpitka" Grid.Column="0" Margin="0,0,4,0" SelectionChanged="ApplyFiltersPodpitka_Changed"/>
+                    <ComboBox x:Name="CmbSystemTypePodpitka" Grid.Column="1" Margin="4,0,0,0" SelectionChanged="ApplyFiltersPodpitka_Changed"/>
+                </Grid>
+            </StackPanel>
+            <ListBox Grid.Row="2" x:Name="ListPodpitka" SelectionMode="Multiple" DisplayMemberPath="DisplayName" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="ListPodpitka_SelectionChanged">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="8,8"/>
+                        <Setter Property="Margin" Value="0,2"/>
+                        <Setter Property="Cursor" Value="Hand"/>
+                        <Setter Property="Foreground" Value="{DynamicResource LabelPrimary}"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="bd" Background="Transparent" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="bd" Property="Background" Value="{DynamicResource HeaderBackground}"/>
+                                        </Trigger>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="bd" Property="Background" Value="{DynamicResource SelectionBackground}"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+            </ListBox>
+            <Border Grid.Row="3" Margin="0,8,0,0" Padding="0,8,0,0" BorderBrush="{DynamicResource BorderBrushColor}" BorderThickness="0,1,0,0">
+                <Grid>
+                    <Button Content="Выделить всё" Style="{StaticResource AppleGhostButton}" HorizontalAlignment="Left" Click="BtnSelectAllPodpitka_Click"/>
+                    <Button Content="Очистить" Style="{StaticResource AppleGhostButton}" Foreground="#FF3B30" HorizontalAlignment="Right" Click="BtnClearSelectionPodpitka_Click"/>
+                </Grid>
+            </Border>
+        </Grid>
+    </Border>
+
+    <!-- Кнопка сворачивания левой панели подпитки -->
+    <Button x:Name="BtnTogglePodpPanel" Grid.Column="1" Content="◀" Style="{StaticResource SidePanelToggleBtn}" Click="BtnTogglePodpitka_Click" ToolTip="Свернуть/развернуть список точек"/>
+
+    <!-- Правая колонка: Панель управления и карточки -->
+    <Border Grid.Column="2" Background="Transparent" CornerRadius="14">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Верхняя панель управления подпиткой -->
+            <Border Grid.Row="0" Background="{DynamicResource CardBackground}" CornerRadius="14" Padding="14" Margin="0,0,0,16">
+                <Border.Effect>
+                    <DropShadowEffect Color="#000000" BlurRadius="20" ShadowDepth="2" Opacity="0.04"/>
+                </Border.Effect>
+                <WrapPanel VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,20,10">
+                        <TextBlock Text="Автоопрос (мин):" FontSize="13" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox x:Name="CmbPodpitkaInterval" Width="65" SelectionChanged="CmbPodpitkaInterval_Changed"/>
+                    </StackPanel>
+
+                    <!-- Масштаб карточек подпитки -->
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,20,10">
+                        <TextBlock Text="Масштаб карточек:" FontSize="12" Foreground="{DynamicResource LabelSecondary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <Slider x:Name="SldPodpitkaScale" Width="90" Minimum="0.6" Maximum="1.6" Value="1.0" TickFrequency="0.05" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,10">
+                        <Button x:Name="BtnPodpitkaLimits" Content="⚙ Допуски V1" Style="{StaticResource ApplePrimaryButton}" Background="{DynamicResource AccentGray}" Margin="0,0,10,0" Click="BtnPodpitkaLimits_Click"/>
+                        <Button x:Name="BtnPodpitkaForce" Content="⟳ Принудительный опрос" Style="{StaticResource AppleGreenButton}" Margin="0,0,10,0" Click="BtnPodpitkaForce_Click"/>
+                        <Button x:Name="BtnStartPodpitka" Content="▶ Запустить автоопрос" Style="{StaticResource AppleGreenButton}" Margin="0,0,10,0" Click="BtnStartPodpitka_Click"/>
+                        <Button x:Name="BtnStopPodpitka" Content="⏹ Остановить" Style="{StaticResource AppleRedButton}" Margin="0,0,0,0" Visibility="Collapsed" Click="BtnStopPodpitka_Click"/>
+                    </StackPanel>
                 </WrapPanel>
-              </Border>
-              <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            </Border>
+
+            <!-- Сетка карточек с подключенным масштабированием -->
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                 <ItemsControl x:Name="ItemsPodpitka">
-                  <ItemsControl.ItemsPanel><ItemsPanelTemplate><local:MasonryPanel Spacing="6" MaxCardWidth="340"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                      <Border Background="{Binding TileBackground}" CornerRadius="8" Padding="8" VerticalAlignment="Top" HorizontalAlignment="Left">
-                        <StackPanel>
-                          <TextBlock Text="{Binding NodeTitle}" Foreground="White" FontWeight="Bold" FontSize="13" TextWrapping="Wrap" MaxWidth="300"/>
-                          <TextBlock Text="{Binding GeneralStatus}" Foreground="White" FontSize="10" Opacity="0.85" Margin="0,1,0,6"/>
-                          <ItemsControl ItemsSource="{Binding Points}">
-                            <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                            <ItemsControl.ItemTemplate>
-                              <DataTemplate>
-                                <Border Background="#26000000" CornerRadius="4" Padding="4" Margin="2">
-                                  <StackPanel>
-                                    <Grid>
-                                      <TextBlock Text="{Binding Title}" Foreground="{Binding PointTitleColor}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Left"/>
-                                      <Button HorizontalAlignment="Right" Tag="{Binding}" Click="BtnPodpitkaRetry_Click" Visibility="{Binding RetryVisibility}"
-                                              Background="Transparent" BorderThickness="0" Content="↻" Foreground="#FF9500" ToolTip="Повторить опрос точки"/>
-                                    </Grid>
-                                    <UniformGrid Columns="2">
-                                      <Border Background="{Binding ReportBg}" CornerRadius="3" Padding="4,2" Margin="1">
-                                        <StackPanel><TextBlock Text="Отчётный период V1" FontSize="9" Foreground="White" Opacity="0.8"/>
-                                          <TextBlock Text="{Binding Report, StringFormat={}{0:F1} м³, TargetNullValue='—'}" FontSize="13" FontWeight="Bold" Foreground="{Binding ReportFg}"/></StackPanel></Border>
-                                      <Border Background="{Binding DayBg}" CornerRadius="3" Padding="4,2" Margin="1">
-                                        <StackPanel><TextBlock Text="Вчера V1" FontSize="9" Foreground="White" Opacity="0.8"/>
-                                          <TextBlock Text="{Binding Day, StringFormat={}{0:F1} м³, TargetNullValue='—'}" FontSize="13" FontWeight="Bold" Foreground="{Binding DayFg}"/></StackPanel></Border>
-                                      <Border Background="{Binding TodayBg}" CornerRadius="3" Padding="4,2" Margin="1">
-                                        <StackPanel><TextBlock Text="Сегодня V1" FontSize="9" Foreground="White" Opacity="0.8"/>
-                                          <TextBlock Text="{Binding Today, StringFormat={}{0:F1} м³, TargetNullValue='—'}" FontSize="13" FontWeight="Bold" Foreground="{Binding TodayFg}"/></StackPanel></Border>
-                                      <Border Background="{Binding HourBg}" CornerRadius="3" Padding="4,2" Margin="1">
-                                        <StackPanel><TextBlock Text="Прошлый час V1" FontSize="9" Foreground="White" Opacity="0.8"/>
-                                          <TextBlock Text="{Binding Hour, StringFormat={}{0:F2} м³, TargetNullValue='—'}" FontSize="13" FontWeight="Bold" Foreground="{Binding HourFg}"/></StackPanel></Border>
-                                    </UniformGrid>
-                                  </StackPanel>
-                                </Border>
-                              </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                          </ItemsControl>
-                        </StackPanel>
-                      </Border>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
+                    <ItemsControl.LayoutTransform>
+                        <ScaleTransform ScaleX="{Binding ElementName=SldPodpitkaScale, Path=Value}" 
+                                        ScaleY="{Binding ElementName=SldPodpitkaScale, Path=Value}"/>
+                    </ItemsControl.LayoutTransform>
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <local:MasonryPanel Spacing="6" MaxCardWidth="360"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="{Binding TileBackground}" CornerRadius="8" Padding="8" VerticalAlignment="Top" HorizontalAlignment="Left">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding NodeTitle}" Foreground="White" FontWeight="Bold" FontSize="13" TextWrapping="Wrap" MaxWidth="320"/>
+                                    <TextBlock Text="{Binding GeneralStatus}" Foreground="White" FontSize="10" Opacity="0.85" Margin="0,1,0,6"/>
+                                    <ItemsControl ItemsSource="{Binding Points}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Background="#26000000" CornerRadius="4" Padding="4" Margin="2">
+                                                    <StackPanel>
+                                                        <Grid>
+                                                            <TextBlock Text="{Binding Title}" Foreground="{Binding PointTitleColor}" FontSize="11" FontWeight="Bold" HorizontalAlignment="Left"/>
+                                                            <Button HorizontalAlignment="Right" Tag="{Binding}" Click="BtnPodpitkaRetry_Click" Visibility="{Binding RetryVisibility}"
+                                                                    Background="Transparent" BorderThickness="0" Content="↻" Foreground="#FF9500" ToolTip="Повторить опрос точки"/>
+                                                        </Grid>
+                                                        <UniformGrid Columns="2">
+                                                            <Border Background="{Binding ReportBg}" CornerRadius="3" Padding="4,2" Margin="1">
+                                                                <StackPanel>
+                                                                    <TextBlock Text="Отчётный период V1" FontSize="9" Foreground="White" Opacity="0.8"/>
+                                                                    <TextBlock Text="{Binding Report, StringFormat={}{0:F1} м³, TargetNullValue='—'}" FontSize="13" FontWeight="Bold" Foreground="{Binding ReportFg}"/>
+                                                                </StackPanel>
+                                                            </Border>
+                                                            <Border Background="{Binding DayBg}" CornerRadius="3" Padding="4,2" Margin="1">
+                                                                <StackPanel>
+                                                                    <TextBlock Text="Вчера V1" FontSize="9" Foreground="White" Opacity="0.8"/>
+                                                                    <TextBlock Text="{Binding Day, StringFormat={}{0:F1} м³, TargetNullValue='—'}" FontSize="13" FontWeight="Bold" Foreground="{Binding DayFg}"/>
+                                                                </StackPanel>
+                                                            </Border>
+                                                            <Border Background="{Binding TodayBg}" CornerRadius="3" Padding="4,2" Margin="1">
+                                                                <StackPanel>
+                                                                    <TextBlock Text="Сегодня V1" FontSize="9" Foreground="White" Opacity="0.8"/>
+                                                                    <TextBlock Text="{Binding Today, StringFormat={}{0:F1} м³, TargetNullValue='—'}" FontSize="13" FontWeight="Bold" Foreground="{Binding TodayFg}"/>
+                                                                </StackPanel>
+                                                            </Border>
+                                                            <Border Background="{Binding HourBg}" CornerRadius="3" Padding="4,2" Margin="1">
+                                                                <StackPanel>
+                                                                    <TextBlock Text="Прошлый час V1" FontSize="9" Foreground="White" Opacity="0.8"/>
+                                                                    <TextBlock Text="{Binding Hour, StringFormat={}{0:F2} м³, TargetNullValue='—'}" FontSize="13" FontWeight="Bold" Foreground="{Binding HourFg}"/>
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </UniformGrid>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
                 </ItemsControl>
-              </ScrollViewer>
-            </Grid>
+            </ScrollViewer>
+        </Grid>
+    </Border>
+</Grid>
 
             <!-- Статус бар -->
             <Border Grid.Row="3" Margin="4,12,4,0">
