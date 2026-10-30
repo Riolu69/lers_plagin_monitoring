@@ -1062,9 +1062,6 @@ namespace LersMonitor
             TxtStatus.Text = "Автоопрос подпитки остановлен.";
         }
 
-        private void BtnPodpitkaPoints_Click(object sender, RoutedEventArgs e) { }
-        private void BtnCancelPodpitkaPoints_Click(object sender, RoutedEventArgs e) { }
-        private void BtnSavePodpitkaPoints_Click(object sender, RoutedEventArgs e) { }
 
         private void CmbPodpitkaInterval_Changed(object sender, SelectionChangedEventArgs e)
         {
