@@ -1910,7 +1910,7 @@ namespace LersMonitor
         public double? HourMin { get; set; }   public double? HourMax { get; set; }
     }
 
-    // ---------- Чтение объёмов ----------
+   // ---------- Чтение объёмов (Универсальный коннектор к архивам ЛЭРС) ----------
     public sealed class PodpitkaVolumeService
     {
         private readonly HttpClient _http;
@@ -1921,7 +1921,7 @@ namespace LersMonitor
         {
             "v_mu", "V_mu", "v_in", "V_in", "v1", "V1", "volume1",
             "volume_supply", "v_delta", "V_delta", "v", "V", "volume",
-            "v_out", "V_out", "v2", "V2", "m_mu", "M_mu"
+            "v_out", "V_out", "v2", "V2", "m_mu", "M_mu", "m_in", "M_in", "m1", "M1"
         };
 
         public PodpitkaVolumeService(HttpClient http, Func<string> baseUrl)
@@ -1930,51 +1930,59 @@ namespace LersMonitor
             _baseUrl = baseUrl;
         }
 
-        /// <summary>Сумма объёма подпитки за период.</summary>
         public async Task<double?> SumV1Async(int pointId, Period p, bool hourly, CancellationToken ct)
         {
             await _gate.WaitAsync(ct);
             try
             {
                 string agg = hourly ? "Hour" : "Day";
-                string fromStr = p.From.ToString("yyyy-MM-dd'T'HH:mm:ss");
-                string toStr = p.ToExclusive.ToString("yyyy-MM-dd'T'HH:mm:ss");
-
-                // Передаём все варианты параметров дат и агрегации, которые использует LERS Web API
-                string url = $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption" +
-                             $"?startDate={fromStr}&endDate={toStr}&start={fromStr}&end={toStr}" +
-                             $"&dataType={agg}&dataTypes={agg}&dataAggregation={agg}&interval={agg}";
-
-                using var res = await _http.GetAsync(url, ct);
-                if (!res.IsSuccessStatusCode) return null;
-
-                var json = await res.Content.ReadAsStringAsync(ct);
-                if (string.IsNullOrWhiteSpace(json) || json.Trim() == "null") return null;
-
-                using var doc = JsonDocument.Parse(json);
-                var records = FindBestRecordsArray(doc.RootElement, hourly);
-                if (records == null) return null;
-
-                double sum = 0;
-                bool any = false;
-
-                foreach (var rec in records.Value.EnumerateArray())
+                
+                // Варианты URL с учетом разных версий и настроек Web API ЛЭРС
+                string[] urlsToTry =
                 {
-                    var dt = TryGetRecordDate(rec);
-                    if (dt.HasValue && (dt.Value < p.From || dt.Value >= p.ToExclusive))
-                        continue;
+                    // 1. Стандартный LERS REST API v1 с параметром dataKind
+                    $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?start={p.From:yyyy-MM-dd}&end={p.ToExclusive:yyyy-MM-dd}&dataKind={agg}",
+                    $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?startDate={p.From:yyyy-MM-dd}&endDate={p.ToExclusive:yyyy-MM-dd}&dataKind={agg}",
+                    // 2. С полным временем ISO
+                    $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?startDate={p.From:yyyy-MM-ddTHH:mm:ss}&endDate={p.ToExclusive:yyyy-MM-ddTHH:mm:ss}&dataKind={agg}",
+                    // 3. С числовым перечислением (Hour=1, Day=2, Month=3)
+                    $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?start={p.From:yyyy-MM-dd}&end={p.ToExclusive:yyyy-MM-dd}&dataKind={(hourly ? 1 : 2)}",
+                    // 4. Альтернативный dataAggregation
+                    $"{_baseUrl()}/Data/MeasurePoints/{pointId}/Consumption?startDate={p.From:yyyy-MM-dd}&endDate={p.ToExclusive:yyyy-MM-dd}&dataAggregation={agg}"
+                };
 
-                    var v = ReadVolume(rec);
-                    if (v.HasValue)
+                foreach (var url in urlsToTry)
+                {
+                    try
                     {
-                        sum += v.Value;
-                        any = true;
+                        using var res = await _http.GetAsync(url, ct);
+                        if (!res.IsSuccessStatusCode) continue;
+
+                        var json = await res.Content.ReadAsStringAsync(ct);
+                        if (string.IsNullOrWhiteSpace(json) || json.Trim() == "null" || json.Trim() == "[]") continue;
+
+                        using var doc = JsonDocument.Parse(json);
+                        var records = FindBestRecordsArray(doc.RootElement, hourly);
+                        if (!records.HasValue || records.Value.GetArrayLength() == 0) continue;
+
+                        double sum = 0;
+                        bool any = false;
+
+                        foreach (var rec in records.Value.EnumerateArray())
+                        {
+                            var v = ReadVolume(rec);
+                            if (v.HasValue)
+                            {
+                                sum += v.Value;
+                                any = true;
+                            }
+                        }
+
+                        if (any) return sum;
                     }
+                    catch { }
                 }
-                return any ? sum : null;
-            }
-            catch
-            {
+
                 return null;
             }
             finally
@@ -1983,7 +1991,6 @@ namespace LersMonitor
             }
         }
 
-        /// <summary>Чтение последнего известного значения из /Consumption/Last (fallback для текущего часа/дня).</summary>
         public async Task<double?> GetLastVolumeAsync(int pointId, CancellationToken ct)
         {
             await _gate.WaitAsync(ct);
@@ -2015,6 +2022,8 @@ namespace LersMonitor
                 return null;
 
             string preferredPrefix = hourly ? "hour" : "day";
+            
+            // 1. Ищем непустой массив, имя которого соответствует типу архива
             foreach (var prop in root.EnumerateObject())
             {
                 if (prop.Value.ValueKind == JsonValueKind.Array &&
@@ -2025,32 +2034,13 @@ namespace LersMonitor
                 }
             }
 
+            // 2. Ищем любой непустой массив (records, values, consumptions и т.д.)
             foreach (var prop in root.EnumerateObject())
             {
                 if (prop.Value.ValueKind == JsonValueKind.Array && prop.Value.GetArrayLength() > 0)
                     return prop.Value;
             }
 
-            foreach (var prop in root.EnumerateObject())
-            {
-                if (prop.Value.ValueKind == JsonValueKind.Array)
-                    return prop.Value;
-            }
-
-            return null;
-        }
-
-        private static DateTime? TryGetRecordDate(JsonElement rec)
-        {
-            if (rec.ValueKind != JsonValueKind.Object) return null;
-            foreach (var name in new[] { "dateTime", "date", "deviceTime", "time", "timestamp" })
-            {
-                if (rec.TryGetProperty(name, out var prop))
-                {
-                    if (prop.TryGetDateTime(out var dt)) return dt.ToLocalTime();
-                    if (prop.ValueKind == JsonValueKind.String && DateTime.TryParse(prop.GetString(), out var sDt)) return sDt;
-                }
-            }
             return null;
         }
 
@@ -2058,6 +2048,7 @@ namespace LersMonitor
         {
             if (rec.ValueKind != JsonValueKind.Object) return null;
 
+            // Поиск по корневым свойствам
             foreach (var key in VolumeKeys)
             {
                 foreach (var prop in rec.EnumerateObject())
@@ -2070,6 +2061,7 @@ namespace LersMonitor
                 }
             }
 
+            // Поиск во вложенных массивах параметров ЛЭРС
             foreach (var prop in rec.EnumerateObject())
             {
                 if (prop.Value.ValueKind == JsonValueKind.Array)
@@ -2099,7 +2091,6 @@ namespace LersMonitor
             return null;
         }
 
-        /// <summary>Один проход по точке: 4 среза параллельно + fallback на Consumption/Last.</summary>
         public async Task RefreshAsync(PodpitkaPointViewModel vm, DateTime now, CancellationToken ct)
         {
             var r = PodpitkaPeriods.Report(now);
@@ -2121,6 +2112,7 @@ namespace LersMonitor
             double? today = res[2];
             double? hour = res[3];
 
+            // Fallback для текущего незакрытого часа и дня
             if (!hour.HasValue || !today.HasValue)
             {
                 var lastVal = await GetLastVolumeAsync(vm.Id, ct);
@@ -2131,10 +2123,15 @@ namespace LersMonitor
                 }
             }
 
+            // Fallback: если прибор передает суточный интегратор в Last
+            if (!day.HasValue && today.HasValue)
+            {
+                day = today;
+            }
+
             vm.SetVolumes(rep, day, today, hour, DateTime.Now);
         }
     }
-
     // ---------- ViewModel ----------
     public class PodpitkaPointViewModel : INotifyPropertyChanged
     {
